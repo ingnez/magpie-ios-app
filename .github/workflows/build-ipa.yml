@@ -1,0 +1,72 @@
+name: Build Magpie Unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode & SDK environment
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+
+      - name: Install XcodeGen and generate Magpie.xcodeproj
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen generate --spec project.yml
+          ls -la Magpie.xcodeproj
+
+      - name: Build Magpie.app with xcodebuild (iphoneos Release, unsigned)
+        run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild \
+            -project Magpie.xcodeproj \
+            -scheme Magpie \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            clean build | tee build/xcodebuild.log
+
+      - name: Package & verify Magpie-unsigned.ipa
+        run: |
+          APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/Magpie.app"
+          test -d "$APP_PATH"
+          test -f "$APP_PATH/Magpie"
+          test -f "$APP_PATH/www/index.html"
+          file "$APP_PATH/Magpie"
+          otool -L "$APP_PATH/Magpie"
+          mkdir -p build/ipa/Payload
+          cp -R "$APP_PATH" build/ipa/Payload/Magpie.app
+          (cd build/ipa && zip -qry ../../Magpie-unsigned.ipa Payload)
+          ls -lh Magpie-unsigned.ipa
+
+      - name: Upload Magpie-unsigned.ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Magpie-unsigned-ipa
+          path: Magpie-unsigned.ipa
+          retention-days: 30
+
+      - name: Upload xcodebuild log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14

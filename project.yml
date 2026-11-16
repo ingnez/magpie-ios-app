@@ -1,0 +1,42 @@
+name: Magpie
+options:
+  bundleIdPrefix: ai.usemagpie
+  deploymentTarget:
+    iOS: "15.0"
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_BITCODE: "NO"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGNING_REQUIRED: "NO"
+
+targets:
+  Magpie:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Magpie
+        excludes:
+          - "Info.plist"
+          - "Entitlements.plist"
+          - "www/**"
+      - path: Magpie/www
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: Magpie
+        PRODUCT_BUNDLE_IDENTIFIER: ai.usemagpie.ios
+        INFOPLIST_FILE: Magpie/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Magpie/Entitlements.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SUPPORTS_MACCATALYST: "NO"
+    schemes:
+      Magpie:
+        build:
+          targets:
+            Magpie: all
