@@ -83,9 +83,37 @@ final class FixtureHTTPServer {
         let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
         lock.lock(); rows.append(["path": path, "body": payload]); lock.unlock()
         if path.hasPrefix("/api/groups/") { json(connection, responses["/api/groups"]!) }
-        else if path == "/api/provider/save" { json(connection, responses["/api/providers"]!) }
+        else if path == "/api/provider/save" || path.hasPrefix("/api/provider/") || path.hasPrefix("/api/providers/") || path.hasPrefix("/api/keys/") {
+            json(connection, responses["/api/providers"]!)
+        }
         else if path == "/api/masking/values" { json(connection, ["values": ["{{EMAIL_demo}}": "demo@example.invalid"]]) }
+        else if path == "/api/masking/preview" { json(connection, ["text": "预览 {{EMAIL_demo}}", "hits": []]) }
+        else if path == "/api/settings/port" {
+            json(connection, ["settings": responses["/api/settings"]!, "port": ["ok": true]])
+        }
+        else if path == "/api/settings/archive" {
+            json(connection, ["on": (payload["on"] as? Bool) ?? false, "folder": "~/.config/magpie/archive"])
+        }
         else if path == "/api/settings" || path.hasPrefix("/api/settings/") { json(connection, responses["/api/settings"]!) }
+        else if path == "/api/proxies/test" { json(connection, ["ok": true, "ms": 35, "ip": "203.0.113.10", "loc": "HK"]) }
+        else if path.hasPrefix("/api/proxies/") { json(connection, responses["/api/settings"]!) }
+        else if path == "/api/backup/export" {
+            json(connection, ["path": "~/Downloads/magpie-2026-11-17.magpie", "providers": 1, "profiles": 1, "agents": 1, "library": true, "signIns": 0])
+        }
+        else if path == "/api/backup/import" {
+            json(connection, ["providers": 1, "profiles": 1, "agents": 1, "settings": true, "library": true, "memory": 0, "signIns": 0, "signInsLocked": false])
+        }
+        else if path.hasPrefix("/api/autobackup/") { json(connection, responses["/api/autobackup"]!) }
+        else if path.hasPrefix("/api/davsync/") { json(connection, responses["/api/davsync"]!) }
+        else if path.hasPrefix("/api/tune/") {
+            json(connection, ["value": (payload["value"] as? String) ?? "160000", "source": "long", "ours": true, "take": false])
+        }
+        else if path == "/api/model-price" { json(connection, responses["/api/model-price"]!) }
+        else if path == "/api/privacy-model" { json(connection, responses["/api/privacy-model"]!) }
+        else if path == "/api/gateway/take-over" || path == "/api/gateway/restart" { json(connection, ["ok": true]) }
+        else if path == "/api/gateway/pause" { json(connection, ["paused": (payload["on"] as? Bool) ?? false, "agents": ["claude"]]) }
+        else if path == "/api/gateway/unrest" { json(connection, ["lifted": true]) }
+        else if path == "/api/usage/clear" || path == "/api/usage/codex-reset" { json(connection, ["ok": true]) }
         else if path.hasPrefix("/api/caller-keys/") { json(connection, responses["/api/caller-keys"]!) }
         else { json(connection, responses["/api/state"]!) }
     }

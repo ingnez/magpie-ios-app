@@ -571,7 +571,8 @@ actor MagpieWebClient {
             "builtins", "panelKeys", "jsRoutings", "onNetwork", "allowIPsEnv",
             "allowIPsFromEnv", "mtlsCerts", "mtlsErr", "joinOn", "publicURL",
             "publicKind", "wsl", "web", "gatewayOn", "gatewayWhy", "gatewayPaused",
-            "barkKeySet"
+            "barkKeySet", "proxies", "proxyNow", "proxySource", "claudeCache",
+            "claudeAttribution", "searchAPIs", "searchVendors", "searchChoices"
         ]
         for key in readOnlyKeys {
             base.removeValue(forKey: key)

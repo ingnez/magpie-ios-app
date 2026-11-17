@@ -563,4 +563,130 @@ extension GatewayStore {
             recordActionError(error)
         }
     }
+
+
+    // MARK: - Gateway Control Actions
+
+    func takeOverGateway() async -> String? {
+        do {
+            let res = try await client.takeOverGateway()
+            await refreshProviders()
+            await refreshSettings()
+            if res.ok {
+                showToast("已接管并启动网关")
+                return nil
+            }
+            let msg = res.error ?? res.reason ?? "网关接管未完成"
+            showToast(msg)
+            return msg
+        } catch {
+            recordActionError(error)
+            return error.localizedDescription
+        }
+    }
+
+    func restartGateway() async -> String? {
+        do {
+            let res = try await client.restartGateway()
+            await refreshProviders()
+            await refreshSettings()
+            if res.ok {
+                showToast("已重启网关服务")
+                return nil
+            }
+            let msg = res.error ?? res.reason ?? "网关重启未完成"
+            showToast(msg)
+            return msg
+        } catch {
+            recordActionError(error)
+            return error.localizedDescription
+        }
+    }
+
+    func toggleGatewayPaused(_ pause: Bool) async {
+        do {
+            let res = try await client.setGatewayPaused(on: pause)
+            await refreshSettings()
+            await refreshProviders()
+            if let err = res.error, !err.isEmpty {
+                showToast(err)
+            } else {
+                showToast(res.paused ? "已暂停网关监听" : "已恢复网关监听")
+            }
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func liftGatewayKeyRest(key: String) async -> Bool {
+        do {
+            let lifted = try await client.unrestGatewayKey(key: key)
+            await refreshProviders()
+            showToast(lifted ? "已解除「\(key)」冷却状态" : "该账号/Key 当前未处于冷却中")
+            return lifted
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
+    // MARK: - Proxies & Network Settings Actions
+
+    func saveNamedProxy(id: String?, name: String, url: String, user: String, pass: String?) async -> Bool {
+        do {
+            remoteSettings = try await client.saveProxy(id: id, name: name, url: url, user: user, pass: pass)
+            showToast("已保存代理「\(name)」")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
+    func deleteNamedProxy(id: String, name: String) async -> Bool {
+        do {
+            remoteSettings = try await client.deleteProxy(id: id)
+            showToast("已删除代理「\(name)」")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
+    func saveGatewayPort(_ port: Int) async -> Bool {
+        do {
+            remoteSettings = try await client.updatePort(port)
+            await refreshProviders()
+            showToast("已更新网关端口为 \(port)")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
+    func saveCORSOrigins(_ rawText: String) async {
+        let origins = rawText
+            .split(whereSeparator: { $0 == "," || $0 == "\n" || $0 == " " })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        do {
+            remoteSettings = try await client.updateCORS(origins)
+            showToast("已保存 CORS 允许域名")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func saveGitHubToken(_ token: String) async -> Bool {
+        do {
+            remoteSettings = try await client.updateGitHubToken(token.trimmingCharacters(in: .whitespacesAndNewlines))
+            showToast(token.isEmpty ? "已清除 GitHub Token" : "已保存 GitHub Token")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
 }

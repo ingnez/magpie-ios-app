@@ -435,11 +435,21 @@ struct RemoteRedactRule: Codable, Equatable, Identifiable {
 }
 
 struct RemoteSettingsState: Decodable, Equatable {
+    // General & Appearance (internal/settings/settings.go)
     var theme: String = "system"
     var lang: String = "system"
     var currency: String = "usd"
     var totalCurrency: String = "usd"
     var chineseUnits: Bool = false
+    var dayStart: Int = 0
+    var colorblind: Bool = false
+    var reduceMotion: Bool = false
+    var noBird: Bool = false
+    var gatewayMode: String = ""
+    var plainNames: Bool = false
+    var bareModelIDs: Bool = false
+    var bareModelIDsOnly: Bool = false
+    var login: Bool = false
 
     // Privacy & Redaction (internal/settings/settings.go)
     var redact: Bool = true
@@ -452,15 +462,79 @@ struct RemoteSettingsState: Decodable, Equatable {
     var redactActions: [String: String] = [:]
     var redactAllow: [String] = []
     var redactRouteTo: String = ""
+    var agentTelemetryOff: Bool = false
+    var noAccountDiscovery: Bool = false
+    var signInLinkOnly: Bool = false
+    var requestArchive: Bool = false
+    var requestArchiveLocal: Bool = false
 
-    // Network & Bark (internal/gui/api.go settingsJSON)
+    // Allowances & Alerts (internal/settings/settings.go)
+    var quotaLeft: Bool = false
+    var quotaReads: String = ""
+    var usageAlert: Int = 0
+    var balanceAlert: Double = 0
+    var resetReminder: Int = 0
+    var turnDoneAlert: Int = 0
+    var maskAlert: Bool = false
+
+    // Network, Proxies & Bark (internal/gui/api.go settingsJSON)
+    var proxy: String = ""
+    var pluginProxy: String = ""
+    var updateProxy: String = ""
+    var proxyNow: String = ""
+    var proxySource: String = ""
+    var proxies: [RemoteSavedProxy] = []
     var lan: Bool = false
     var allowIPs: [String] = []
+    var corsOrigins: [String] = []
     var mtls: Bool = false
     var port: Int = 3425
+    var githubToken: String = ""
     var barkServer: String = ""
     var barkDaily: String = ""
     var barkKeySet: Bool = false
+
+    // Models, Context, Codex & Search
+    var vision: String = ""
+    var visionEffort: String = ""
+    var imageGen: String = ""
+    var videoGen: String = ""
+    var replyModel: String = ""
+    var busyLoad: Int = 0
+    var fullContext: Bool = false
+    var compactAt: Int = 0
+    var contextCap: Int = 0
+    var contextCapAll: Bool = false
+    var disabledModels: [String] = []
+    var codexAgentsV1: Bool = false
+    var codexServiceTier: String = ""
+    var codexClient: String = ""
+    var codexOpen: String = ""
+    var codexTitles: String = ""
+    var codexDescriptions: String = ""
+    var codexPredictions: String = ""
+    var codexSuggestions: String = ""
+    var codexAutoReview: String = ""
+    var codexAsyncCompact: Bool = false
+    var codexAsyncCompactPercent: Int = 0
+    var codexWarmup: String = ""
+    var claudeWarmup: String = ""
+    var codexWarmAt: String = ""
+    var claudeWarmAt: String = ""
+    var codexResetLead: Int = 0
+    var claudeCache: [RemoteClaudeCacheItem] = []
+    var claudeAttribution: String = ""
+    var searchAll: Bool = false
+    var searchCount: Int = 5
+    var searchFirst: String = ""
+    var searchAPIs: [RemoteSearchAPI] = []
+
+    // Updates
+    var updateChannel: String = ""
+    var updateMirror: String = ""
+    var noAutoUpdate: Bool = false
+    var noAutoDownload: Bool = false
+    var autoRestart: Bool = false
 
     var automaticCheckins: [String: Bool] = [:]
 
@@ -476,11 +550,25 @@ struct RemoteSettingsState: Decodable, Equatable {
     init() {}
 
     enum CodingKeys: String, CodingKey {
-        case theme, lang, currency, totalCurrency, chineseUnits
+        case theme, lang, currency, totalCurrency, chineseUnits, dayStart
+        case colorblind, reduceMotion, noBird, gatewayMode, plainNames
+        case bareModelIDs, bareModelIDsOnly, login
         case redact, redactPersonal, redactShape, redactWords
         case redactWordsAnyCase, redactWordsWhole, redactRules, redactActions, redactAllow, redactRouteTo
-        case lan, allowIPs, mtls, port
+        case agentTelemetryOff, noAccountDiscovery, signInLinkOnly, requestArchive, requestArchiveLocal
+        case quotaLeft, quotaReads, usageAlert, balanceAlert, resetReminder, turnDoneAlert, maskAlert
+        case proxy, pluginProxy, updateProxy, proxyNow, proxySource, proxies
+        case lan, allowIPs, corsOrigins, mtls, port, githubToken
         case barkServer, barkDaily, barkKeySet
+        case vision, visionEffort, imageGen, videoGen, replyModel
+        case busyLoad, fullContext, compactAt, contextCap, contextCapAll, disabledModels
+        case codexAgentsV1, codexServiceTier, codexClient, codexOpen
+        case codexTitles, codexDescriptions, codexPredictions, codexSuggestions, codexAutoReview
+        case codexAsyncCompact, codexAsyncCompactPercent
+        case codexWarmup, claudeWarmup, codexWarmAt, claudeWarmAt, codexResetLead
+        case claudeCache, claudeAttribution
+        case searchAll, searchCount, searchFirst, searchAPIs
+        case updateChannel, updateMirror, noAutoUpdate, noAutoDownload, autoRestart
         case workbuddyCheckin, traeCheckin, minimaxCheckin, qoderCheckin
         case version, gateway, publicURL, onNetwork, gatewayOn, gatewayWhy, gatewayPaused
     }
@@ -492,6 +580,15 @@ struct RemoteSettingsState: Decodable, Equatable {
         currency = try c.decodeIfPresent(String.self, forKey: .currency) ?? "usd"
         totalCurrency = try c.decodeIfPresent(String.self, forKey: .totalCurrency) ?? "usd"
         chineseUnits = try c.decodeIfPresent(Bool.self, forKey: .chineseUnits) ?? false
+        dayStart = try c.decodeIfPresent(Int.self, forKey: .dayStart) ?? 0
+        colorblind = try c.decodeIfPresent(Bool.self, forKey: .colorblind) ?? false
+        reduceMotion = try c.decodeIfPresent(Bool.self, forKey: .reduceMotion) ?? false
+        noBird = try c.decodeIfPresent(Bool.self, forKey: .noBird) ?? false
+        gatewayMode = try c.decodeIfPresent(String.self, forKey: .gatewayMode) ?? ""
+        plainNames = try c.decodeIfPresent(Bool.self, forKey: .plainNames) ?? false
+        bareModelIDs = try c.decodeIfPresent(Bool.self, forKey: .bareModelIDs) ?? false
+        bareModelIDsOnly = try c.decodeIfPresent(Bool.self, forKey: .bareModelIDsOnly) ?? false
+        login = try c.decodeIfPresent(Bool.self, forKey: .login) ?? false
 
         redact = try c.decodeIfPresent(Bool.self, forKey: .redact) ?? false
         redactPersonal = try c.decodeIfPresent(Bool.self, forKey: .redactPersonal) ?? false
@@ -503,14 +600,75 @@ struct RemoteSettingsState: Decodable, Equatable {
         redactActions = try c.decodeIfPresent([String: String].self, forKey: .redactActions) ?? [:]
         redactAllow = try c.decodeIfPresent([String].self, forKey: .redactAllow) ?? []
         redactRouteTo = try c.decodeIfPresent(String.self, forKey: .redactRouteTo) ?? ""
+        agentTelemetryOff = try c.decodeIfPresent(Bool.self, forKey: .agentTelemetryOff) ?? false
+        noAccountDiscovery = try c.decodeIfPresent(Bool.self, forKey: .noAccountDiscovery) ?? false
+        signInLinkOnly = try c.decodeIfPresent(Bool.self, forKey: .signInLinkOnly) ?? false
+        requestArchive = try c.decodeIfPresent(Bool.self, forKey: .requestArchive) ?? false
+        requestArchiveLocal = try c.decodeIfPresent(Bool.self, forKey: .requestArchiveLocal) ?? false
 
+        quotaLeft = try c.decodeIfPresent(Bool.self, forKey: .quotaLeft) ?? false
+        quotaReads = try c.decodeIfPresent(String.self, forKey: .quotaReads) ?? ""
+        usageAlert = try c.decodeIfPresent(Int.self, forKey: .usageAlert) ?? 0
+        balanceAlert = try c.decodeIfPresent(Double.self, forKey: .balanceAlert) ?? 0
+        resetReminder = try c.decodeIfPresent(Int.self, forKey: .resetReminder) ?? 0
+        turnDoneAlert = try c.decodeIfPresent(Int.self, forKey: .turnDoneAlert) ?? 0
+        maskAlert = try c.decodeIfPresent(Bool.self, forKey: .maskAlert) ?? false
+
+        proxy = try c.decodeIfPresent(String.self, forKey: .proxy) ?? ""
+        pluginProxy = try c.decodeIfPresent(String.self, forKey: .pluginProxy) ?? ""
+        updateProxy = try c.decodeIfPresent(String.self, forKey: .updateProxy) ?? ""
+        proxyNow = try c.decodeIfPresent(String.self, forKey: .proxyNow) ?? ""
+        proxySource = try c.decodeIfPresent(String.self, forKey: .proxySource) ?? ""
+        proxies = try c.decodeIfPresent([RemoteSavedProxy].self, forKey: .proxies) ?? []
         lan = try c.decodeIfPresent(Bool.self, forKey: .lan) ?? false
         allowIPs = try c.decodeIfPresent([String].self, forKey: .allowIPs) ?? []
+        corsOrigins = try c.decodeIfPresent([String].self, forKey: .corsOrigins) ?? []
         mtls = try c.decodeIfPresent(Bool.self, forKey: .mtls) ?? false
         port = try c.decodeIfPresent(Int.self, forKey: .port) ?? 3425
+        githubToken = try c.decodeIfPresent(String.self, forKey: .githubToken) ?? ""
         barkServer = try c.decodeIfPresent(String.self, forKey: .barkServer) ?? ""
         barkDaily = try c.decodeIfPresent(String.self, forKey: .barkDaily) ?? ""
         barkKeySet = try c.decodeIfPresent(Bool.self, forKey: .barkKeySet) ?? false
+
+        vision = try c.decodeIfPresent(String.self, forKey: .vision) ?? ""
+        visionEffort = try c.decodeIfPresent(String.self, forKey: .visionEffort) ?? ""
+        imageGen = try c.decodeIfPresent(String.self, forKey: .imageGen) ?? ""
+        videoGen = try c.decodeIfPresent(String.self, forKey: .videoGen) ?? ""
+        replyModel = try c.decodeIfPresent(String.self, forKey: .replyModel) ?? ""
+        busyLoad = try c.decodeIfPresent(Int.self, forKey: .busyLoad) ?? 0
+        fullContext = try c.decodeIfPresent(Bool.self, forKey: .fullContext) ?? false
+        compactAt = try c.decodeIfPresent(Int.self, forKey: .compactAt) ?? 0
+        contextCap = try c.decodeIfPresent(Int.self, forKey: .contextCap) ?? 0
+        contextCapAll = try c.decodeIfPresent(Bool.self, forKey: .contextCapAll) ?? false
+        disabledModels = try c.decodeIfPresent([String].self, forKey: .disabledModels) ?? []
+        codexAgentsV1 = try c.decodeIfPresent(Bool.self, forKey: .codexAgentsV1) ?? false
+        codexServiceTier = try c.decodeIfPresent(String.self, forKey: .codexServiceTier) ?? ""
+        codexClient = try c.decodeIfPresent(String.self, forKey: .codexClient) ?? ""
+        codexOpen = try c.decodeIfPresent(String.self, forKey: .codexOpen) ?? ""
+        codexTitles = try c.decodeIfPresent(String.self, forKey: .codexTitles) ?? ""
+        codexDescriptions = try c.decodeIfPresent(String.self, forKey: .codexDescriptions) ?? ""
+        codexPredictions = try c.decodeIfPresent(String.self, forKey: .codexPredictions) ?? ""
+        codexSuggestions = try c.decodeIfPresent(String.self, forKey: .codexSuggestions) ?? ""
+        codexAutoReview = try c.decodeIfPresent(String.self, forKey: .codexAutoReview) ?? ""
+        codexAsyncCompact = try c.decodeIfPresent(Bool.self, forKey: .codexAsyncCompact) ?? false
+        codexAsyncCompactPercent = try c.decodeIfPresent(Int.self, forKey: .codexAsyncCompactPercent) ?? 0
+        codexWarmup = try c.decodeIfPresent(String.self, forKey: .codexWarmup) ?? ""
+        claudeWarmup = try c.decodeIfPresent(String.self, forKey: .claudeWarmup) ?? ""
+        codexWarmAt = try c.decodeIfPresent(String.self, forKey: .codexWarmAt) ?? ""
+        claudeWarmAt = try c.decodeIfPresent(String.self, forKey: .claudeWarmAt) ?? ""
+        codexResetLead = try c.decodeIfPresent(Int.self, forKey: .codexResetLead) ?? 0
+        claudeCache = try c.decodeIfPresent([RemoteClaudeCacheItem].self, forKey: .claudeCache) ?? []
+        claudeAttribution = try c.decodeIfPresent(String.self, forKey: .claudeAttribution) ?? ""
+        searchAll = try c.decodeIfPresent(Bool.self, forKey: .searchAll) ?? false
+        searchCount = try c.decodeIfPresent(Int.self, forKey: .searchCount) ?? 5
+        searchFirst = try c.decodeIfPresent(String.self, forKey: .searchFirst) ?? ""
+        searchAPIs = try c.decodeIfPresent([RemoteSearchAPI].self, forKey: .searchAPIs) ?? []
+
+        updateChannel = try c.decodeIfPresent(String.self, forKey: .updateChannel) ?? ""
+        updateMirror = try c.decodeIfPresent(String.self, forKey: .updateMirror) ?? ""
+        noAutoUpdate = try c.decodeIfPresent(Bool.self, forKey: .noAutoUpdate) ?? false
+        noAutoDownload = try c.decodeIfPresent(Bool.self, forKey: .noAutoDownload) ?? false
+        autoRestart = try c.decodeIfPresent(Bool.self, forKey: .autoRestart) ?? false
 
         automaticCheckins = [
             "workbuddy": try c.decodeIfPresent(Bool.self, forKey: .workbuddyCheckin) ?? false,
