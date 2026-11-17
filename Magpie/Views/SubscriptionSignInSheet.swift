@@ -125,6 +125,15 @@ struct SubscriptionSignInSheet: View {
         return !st.pasteKey && !st.pasteCode
     }
 
+    private var expectedCallbackTarget: OAuthCallbackHelper.ExpectedCallbackTarget? {
+        guard let st = signInState, isCallbackURLMode else { return nil }
+        return OAuthCallbackHelper.ExpectedCallbackTarget.from(
+            authURL: st.url,
+            callbackPort: st.callbackPort,
+            requiresQuery: activePlatform.plugin == nil
+        )
+    }
+
     private var effectiveProxyValue: String? {
         switch selectedProxyMode {
         case "":
@@ -826,7 +835,11 @@ struct SubscriptionSignInSheet: View {
                                     .font(.system(size: 12))
                                     .foregroundColor(MagpieTheme.textSecondary)
                             } else {
-                                Text("在浏览器登录授权后，页面最终会跳转到 http://localhost:\(st.callbackPort.map(String.init) ?? "...")/callback 并显示无法打开（因 Magpie 运行在远端服务器）。请直接复制浏览器地址栏完整的 http://localhost... 链接并粘贴到下方！")
+                                let portLabel = st.callbackPort.map(String.init)
+                                    ?? expectedCallbackTarget?.ports.sorted().first.map(String.init)
+                                    ?? "..."
+                                let pathLabel = expectedCallbackTarget?.paths.sorted().first ?? "/callback"
+                                Text("在浏览器登录授权后，页面最终会跳转到 http://localhost:\(portLabel)\(pathLabel) 并显示无法打开（因 Magpie 运行在远端服务器）。请直接复制浏览器地址栏完整的 http:// 链接并粘贴到下方！")
                                     .font(.system(size: 12))
                                     .foregroundColor(MagpieTheme.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -840,7 +853,7 @@ struct SubscriptionSignInSheet: View {
                                             callbackInput = normalized
                                             errorText = nil
                                             callbackServerErrorRaw = nil
-                                            let validationErr = normalized.isEmpty ? nil : OAuthCallbackHelper.validate(normalized)
+                                            let validationErr = normalized.isEmpty ? nil : OAuthCallbackHelper.validate(normalized, expected: expectedCallbackTarget)
                                             validatedCallbackSnapshot = normalized
                                             callbackValidationError = validationErr
                                         } else {
@@ -852,7 +865,7 @@ struct SubscriptionSignInSheet: View {
 
                                 if isCallbackURLMode,
                                    let rawClip = UIPasteboard.general.string,
-                                   let quickCallback = OAuthCallbackHelper.detectedCallbackURL(from: rawClip) {
+                                   let quickCallback = OAuthCallbackHelper.detectedCallbackURL(from: rawClip, expected: expectedCallbackTarget) {
                                     Button("检测到回调链接，一键提交") {
                                         callbackInput = quickCallback
                                         callbackValidationError = nil
@@ -1441,7 +1454,7 @@ struct SubscriptionSignInSheet: View {
         if urlMode {
             let normalized = OAuthCallbackHelper.normalize(callbackInput)
             callbackInput = normalized
-            if let validationMessage = OAuthCallbackHelper.validate(normalized) {
+            if let validationMessage = OAuthCallbackHelper.validate(normalized, expected: expectedCallbackTarget) {
                 validatedCallbackSnapshot = normalized
                 callbackValidationError = validationMessage
                 errorText = nil

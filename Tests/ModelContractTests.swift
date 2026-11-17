@@ -94,63 +94,103 @@ struct ModelContractTests {
         precondition(agyRestProvider.accountWeights["a@gmail.com"] == 3)
         precondition(agyRestProvider.accountRests["b@gmail.com"]?.first?.key == "antigravity#b@gmail.com")
 
-        // OAuth callback URL normalization, validation & HTTP 400 mapping unit tests
-        let screenshotSample = "localhost:13035/oauth-callback?state=LU"
+        // OAuth callback URL normalization, http-only + port/path preflight & real 400 mapping tests
+        let screenshotSample = "localhost:54321/callback?state=LU"
         let normalizedSample = OAuthCallbackHelper.normalize(screenshotSample)
-        precondition(normalizedSample == "http://localhost:13035/oauth-callback?state=LU", "Expected http:// prefix for screenshot sample, got \(normalizedSample)")
-        precondition(OAuthCallbackHelper.validate(normalizedSample) == nil, "Normalized screenshot sample must pass local validation")
-        precondition(OAuthCallbackHelper.detectedCallbackURL(from: screenshotSample) == "http://localhost:13035/oauth-callback?state=LU")
+        precondition(normalizedSample == "http://localhost:54321/callback?state=LU", "Expected http:// prefix for sample, got \(normalizedSample)")
 
-        let normCases: [(String, String)] = [
-            ("  \u{3000}localhost:13035/oauth-callback?state=LU\n\t ", "http://localhost:13035/oauth-callback?state=LU"),
-            ("\"localhost:13035/oauth-callback?state=LU\"", "http://localhost:13035/oauth-callback?state=LU"),
-            ("\u{201C}127.0.0.1:54321/callback?code=abc&state=s1\u{201D}", "http://127.0.0.1:54321/callback?code=abc&state=s1"),
-            ("\u{2018}[::1]:1455/auth/callback?code=xyz\u{2019}", "http://[::1]:1455/auth/callback?code=xyz"),
-            ("`'https://magpie.example.com/oauth/callback?code=1'`", "https://magpie.example.com/oauth/callback?code=1"),
-            ("192.168.1.50:8080/oauth-callback?code=9", "http://192.168.1.50:8080/oauth-callback?code=9"),
-            ("dev-box.local:3430/callback?state=ok", "http://dev-box.local:3430/callback?state=ok"),
-            ("localhost:13035/callback?next=https://accounts.google.com", "http://localhost:13035/callback?next=https://accounts.google.com"),
-            ("   \u{3000}\n  ", "")
+        let expectedGoogle = OAuthCallbackHelper.ExpectedCallbackTarget.from(
+            authURL: "https://accounts.google.com/o/oauth2/v2/auth?client_id=demo&redirect_uri=http%3A%2F%2F127.0.0.1%3A54321%2Fcallback&state=s1",
+            callbackPort: nil
+        )
+        precondition(expectedGoogle.ports == [54321] && expectedGoogle.paths == ["/callback"], "Expected port 54321 and /callback")
+        precondition(OAuthCallbackHelper.validate(normalizedSample, expected: expectedGoogle) == nil, "Normalized sample must pass port/path preflight")
+        precondition(OAuthCallbackHelper.detectedCallbackURL(from: screenshotSample, expected: expectedGoogle) == "http://localhost:54321/callback?state=LU")
+
+        let expectedCodeArts = OAuthCallbackHelper.ExpectedCallbackTarget.from(
+            authURL: "https://auth.huaweicloud.com/authui/login?service=https%3A%2F%2Fcodearts.ap-southeast-1.huaweicloud.com%2Fportal%2Fauthorize%3Fport%3D37093",
+            callbackPort: nil,
+            requiresQuery: false
+        )
+        precondition(expectedCodeArts.ports == [37093] && expectedCodeArts.paths.isEmpty)
+
+        let normCases: [(String, String, Bool)] = [
+            ("  \u{3000}localhost:13035/oauth-callback?state=LU\n\t ", "http://localhost:13035/oauth-callback?state=LU", true),
+            ("\"localhost:13035/oauth-callback?state=LU\"", "http://localhost:13035/oauth-callback?state=LU", true),
+            ("\u{201C}127.0.0.1:54321/callback?code=abc&state=s1\u{201D}", "http://127.0.0.1:54321/callback?code=abc&state=s1", true),
+            ("\u{2018}[::1]:1455/auth/callback?code=xyz\u{2019}", "http://[::1]:1455/auth/callback?code=xyz", true),
+            ("`'https://magpie.example.com/oauth/callback?code=1'`", "https://magpie.example.com/oauth/callback?code=1", false),
+            ("192.168.1.50:8080/oauth-callback?code=9", "http://192.168.1.50:8080/oauth-callback?code=9", false),
+            ("dev-box.local:3430/callback?state=ok", "http://dev-box.local:3430/callback?state=ok", false),
+            ("localhost:13035/callback?next=https://accounts.google.com", "http://localhost:13035/callback?next=https://accounts.google.com", true),
+            ("   \u{3000}\n  ", "", false)
         ]
-        for (rawInput, expected) in normCases {
+        for (rawInput, expected, shouldBeValid) in normCases {
             let actual = OAuthCallbackHelper.normalize(rawInput)
             precondition(actual == expected, "Normalize mismatch for \(rawInput): expected \(expected), got \(actual)")
-            if !expected.isEmpty {
+            if shouldBeValid {
                 precondition(OAuthCallbackHelper.validate(actual) == nil, "Expected valid URL for \(expected)")
+            } else if !actual.isEmpty {
+                precondition(OAuthCallbackHelper.validate(actual) != nil, "Expected invalid URL for \(expected)")
             }
         }
 
-        let invalidInputs: [(String, String)] = [
-            ("", "请粘贴"),
-            ("example.com/oauth-callback?code=1", "http://"),
-            ("ftp://localhost:13035/oauth-callback", "http://"),
-            ("http:///oauth-callback?code=1", "主机名"),
-            ("localhost:13035", "缺少回调路径"),
-            ("http://localhost:13035?state=LU", "缺少回调路径"),
-            ("http://localhost:13035/oauth callback?state=LU", "空格")
+        let invalidInputs: [(String, OAuthCallbackHelper.ExpectedCallbackTarget?, String)] = [
+            ("", nil, "请粘贴"),
+            ("example.com/oauth-callback?code=1", nil, "http://"),
+            ("https://localhost:54321/callback?code=1&state=s1", expectedGoogle, "只支持 http://"),
+            ("ftp://localhost:13035/oauth-callback?code=1", nil, "http://"),
+            ("http:///oauth-callback?code=1", nil, "主机名"),
+            ("http://192.168.1.50:8080/oauth-callback?code=9", nil, "主机名应为"),
+            ("localhost:54321", expectedGoogle, "缺少回调路径"),
+            ("http://localhost:13035/callback?code=1&state=s1", expectedGoogle, "端口不匹配"),
+            ("http://localhost/callback?code=1&state=s1", expectedGoogle, "缺少端口号"),
+            ("http://localhost:54321/oauth-callback?code=1&state=s1", expectedGoogle, "回调路径不匹配"),
+            ("http://localhost:54321/callback", expectedGoogle, "缺少查询参数"),
+            ("http://localhost:13035/oauth callback?state=LU", nil, "空格")
         ]
-        for (rawInvalid, expectedFragment) in invalidInputs {
+        for (rawInvalid, expectedTarget, expectedFragment) in invalidInputs {
             let norm = OAuthCallbackHelper.normalize(rawInvalid)
-            let err = OAuthCallbackHelper.validate(norm)
+            let err = OAuthCallbackHelper.validate(norm, expected: expectedTarget)
             precondition(err != nil && err!.contains(expectedFragment), "Validation for \(rawInvalid) -> \(norm) expected fragment \(expectedFragment), got \(String(describing: err))")
         }
 
+        precondition(OAuthCallbackHelper.detectedCallbackURL(from: "https://localhost:54321/callback?code=1&state=s1", expected: expectedGoogle) == nil)
+        precondition(OAuthCallbackHelper.detectedCallbackURL(from: "http://localhost:13035/callback?code=1&state=s1", expected: expectedGoogle) == nil)
         precondition(OAuthCallbackHelper.detectedCallbackURL(from: "https://www.google.com/search?q=magpie") == nil)
 
-        let mapped400 = OAuthCallbackHelper.mapServerCallbackError(
+        // Real Go backend error strings (v0.1.3226 / HEAD)
+        let mapped1 = OAuthCallbackHelper.mapServerCallbackError(
             statusCode: 400,
             message: "paste the whole address the browser ended on, starting with http://"
         )
-        precondition(mapped400.summary.contains("http://"), "Mapped 400 must guide user in Chinese")
-        precondition(mapped400.rawDetail == "paste the whole address the browser ended on, starting with http://", "Raw detail must be preserved")
+        precondition(mapped1.summary.contains("http://") && mapped1.rawDetail == "paste the whole address the browser ended on, starting with http://")
 
-        let mappedCode = OAuthCallbackHelper.mapServerCallbackError(statusCode: 400, message: "missing code parameter")
-        precondition(mappedCode.summary.contains("授权码") && mappedCode.rawDetail == "missing code parameter")
+        let mapped2 = OAuthCallbackHelper.mapServerCallbackError(
+            statusCode: 400,
+            message: "that address isn't from this sign-in: paste the one its browser tab ended on"
+        )
+        precondition(mapped2.summary.contains("不属于当前这次登录会话") && mapped2.rawDetail != nil)
 
-        let mappedState = OAuthCallbackHelper.mapServerCallbackError(statusCode: 400, message: "oauth state mismatch")
-        precondition(mappedState.summary.contains("state") && mappedState.rawDetail == "oauth state mismatch")
+        let mapped3 = OAuthCallbackHelper.mapServerCallbackError(
+            statusCode: 400,
+            message: "that address didn't finish the sign-in; start it again"
+        )
+        precondition(mapped3.summary.contains("未能完成登录") && mapped3.rawDetail != nil)
 
-        print("PASS: OAuth callback normalization, validation & 400 mapping (21 assertions)")
+        let mapped4 = OAuthCallbackHelper.mapServerCallbackError(
+            statusCode: 400,
+            message: "this sign-in is over; start it again"
+        )
+        precondition(mapped4.summary.contains("已结束或已失效") && mapped4.rawDetail != nil)
+
+        let mapped4b = OAuthCallbackHelper.mapServerCallbackError(
+            statusCode: 400,
+            message: "no such sign-in"
+        )
+        precondition(mapped4b.summary.contains("已结束或已失效"))
+
+        print("PASS: OAuth callback normalization, http-only + port/path preflight & real 400 mapping")
         print("PASS: OAuth sign-in, 19+ platform catalog, plugin prompts, multi-account logins & usage")
         print("PASS: origins, console routes, preserved provider fields, caller budgets")
         print("PASS: routing conditions, shared agent options, group disabled/off compatibility, numeric balance")

@@ -197,7 +197,7 @@ final class FixtureHTTPServer {
         else if path == "/api/signin/s1/cancel" { json(connection, [:]) }
         else if path == "/api/signin/s1/callback" {
             if let cbURL = payload["url"] as? String, cbURL.contains("trigger-400") {
-                json(connection, ["error": "paste the whole address the browser ended on, starting with http://"], status: 400)
+                json(connection, ["error": "that address isn't from this sign-in: paste the one its browser tab ended on"], status: 400)
                 return
             }
             lock.lock()
