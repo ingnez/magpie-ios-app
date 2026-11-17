@@ -211,8 +211,11 @@ struct MagpieTag: View {
 struct MagpieErrorBanner: View {
     let title: String
     let message: String
+    var detail: String? = nil
     var retryTitle: String? = nil
     var onRetry: (() -> Void)? = nil
+
+    @State private var showDetail = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -234,6 +237,38 @@ struct MagpieErrorBanner: View {
                 .font(.system(size: 12.5))
                 .foregroundColor(MagpieTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let detail = detail, !detail.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            showDetail.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showDetail ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(showDetail ? "收起原文细节" : "查看原文细节")
+                                .font(.system(size: 11.5, weight: .medium))
+                        }
+                        .foregroundColor(MagpieTheme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+
+                    if showDetail {
+                        Text(detail)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(MagpieTheme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(MagpieTheme.canvas)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    }
+                }
+                .padding(.top, 2)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)

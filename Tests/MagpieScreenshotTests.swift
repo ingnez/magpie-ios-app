@@ -257,6 +257,78 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["1 模型在线"].waitForExistence(timeout: 20))
         tab("providers", app: app)
         try exerciseOAuthAccounts(app: app, server: server)
+
+        // Verify callback URL normalization, local Chinese validation & HTTP 400 mapping
+        let countBefore = server.requests().filter { $0["path"] as? String == "/api/signin/s1/callback" }.count
+        tap("OAuth 授权", app: app)
+        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
+        if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
+            tap("仍然继续授权", app: app)
+        }
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+
+        // 1) Missing scheme & missing path -> normalizes http:// into field, blocks request with Chinese hint
+        let cbField = app.textFields["oauthCallbackField"]
+        XCTAssertTrue(cbField.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbField.isHittable { app.swipeUp() }
+        cbField.tap()
+        cbField.typeText("localhost:13035")
+        tap("收起键盘", app: app)
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertEqual(cbField.value as? String, "http://localhost:13035")
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "缺少回调路径")).firstMatch.waitForExistence(timeout: 5),
+            "Expected Chinese validation hint below callback field"
+        )
+        XCTAssertEqual(
+            server.requests().filter { $0["path"] as? String == "/api/signin/s1/callback" }.count,
+            countBefore,
+            "Invalid callback URL must not send a request"
+        )
+
+        // 2) Server HTTP 400 -> Chinese mapping with collapsible original English detail
+        tap("取消登录", app: app, scroll: true)
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        let cbField400 = app.textFields["oauthCallbackField"]
+        XCTAssertTrue(cbField400.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbField400.isHittable { app.swipeUp() }
+        cbField400.tap()
+        cbField400.typeText("localhost:13035/oauth-callback?state=trigger-400")
+        tap("收起键盘", app: app)
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "请粘贴浏览器地址栏最终跳转的完整地址")).firstMatch.waitForExistence(timeout: 10),
+            "Expected Chinese mapped 400 error message"
+        )
+        tap("查看原文细节", app: app, scroll: true)
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "starting with http://")).firstMatch.waitForExistence(timeout: 5),
+            "Expected collapsible raw 400 detail"
+        )
+        shot("29-oauth-callback-400-mapped-demo")
+
+        // 3) Missing http:// on valid localhost callback -> auto-prefixed & submitted
+        tap("取消登录", app: app, scroll: true)
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        let cbFieldNorm = app.textFields["oauthCallbackField"]
+        XCTAssertTrue(cbFieldNorm.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbFieldNorm.isHittable { app.swipeUp() }
+        cbFieldNorm.tap()
+        cbFieldNorm.typeText("localhost:13035/oauth-callback?state=LU")
+        tap("收起键盘", app: app)
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
+        let lastCallback = server.requests().last { $0["path"] as? String == "/api/signin/s1/callback" }
+        XCTAssertEqual(
+            (lastCallback?["body"] as? [String: Any])?["url"] as? String,
+            "http://localhost:13035/oauth-callback?state=LU",
+            "Client must prepend http:// to localhost callback before submitting"
+        )
+        tap("完成并返回", app: app)
     }
 
     private func exerciseOAuthAccounts(app: XCUIApplication, server: FixtureHTTPServer) throws {

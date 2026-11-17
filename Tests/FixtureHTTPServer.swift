@@ -196,6 +196,10 @@ final class FixtureHTTPServer {
         }
         else if path == "/api/signin/s1/cancel" { json(connection, [:]) }
         else if path == "/api/signin/s1/callback" {
+            if let cbURL = payload["url"] as? String, cbURL.contains("trigger-400") {
+                json(connection, ["error": "paste the whole address the browser ended on, starting with http://"], status: 400)
+                return
+            }
             lock.lock()
             var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
             st["state"] = "done"

@@ -94,6 +94,63 @@ struct ModelContractTests {
         precondition(agyRestProvider.accountWeights["a@gmail.com"] == 3)
         precondition(agyRestProvider.accountRests["b@gmail.com"]?.first?.key == "antigravity#b@gmail.com")
 
+        // OAuth callback URL normalization, validation & HTTP 400 mapping unit tests
+        let screenshotSample = "localhost:13035/oauth-callback?state=LU"
+        let normalizedSample = OAuthCallbackHelper.normalize(screenshotSample)
+        precondition(normalizedSample == "http://localhost:13035/oauth-callback?state=LU", "Expected http:// prefix for screenshot sample, got \(normalizedSample)")
+        precondition(OAuthCallbackHelper.validate(normalizedSample) == nil, "Normalized screenshot sample must pass local validation")
+        precondition(OAuthCallbackHelper.detectedCallbackURL(from: screenshotSample) == "http://localhost:13035/oauth-callback?state=LU")
+
+        let normCases: [(String, String)] = [
+            ("  \u{3000}localhost:13035/oauth-callback?state=LU\n\t ", "http://localhost:13035/oauth-callback?state=LU"),
+            ("\"localhost:13035/oauth-callback?state=LU\"", "http://localhost:13035/oauth-callback?state=LU"),
+            ("\u{201C}127.0.0.1:54321/callback?code=abc&state=s1\u{201D}", "http://127.0.0.1:54321/callback?code=abc&state=s1"),
+            ("\u{2018}[::1]:1455/auth/callback?code=xyz\u{2019}", "http://[::1]:1455/auth/callback?code=xyz"),
+            ("`'https://magpie.example.com/oauth/callback?code=1'`", "https://magpie.example.com/oauth/callback?code=1"),
+            ("192.168.1.50:8080/oauth-callback?code=9", "http://192.168.1.50:8080/oauth-callback?code=9"),
+            ("dev-box.local:3430/callback?state=ok", "http://dev-box.local:3430/callback?state=ok"),
+            ("localhost:13035/callback?next=https://accounts.google.com", "http://localhost:13035/callback?next=https://accounts.google.com"),
+            ("   \u{3000}\n  ", "")
+        ]
+        for (rawInput, expected) in normCases {
+            let actual = OAuthCallbackHelper.normalize(rawInput)
+            precondition(actual == expected, "Normalize mismatch for \(rawInput): expected \(expected), got \(actual)")
+            if !expected.isEmpty {
+                precondition(OAuthCallbackHelper.validate(actual) == nil, "Expected valid URL for \(expected)")
+            }
+        }
+
+        let invalidInputs: [(String, String)] = [
+            ("", "请粘贴"),
+            ("example.com/oauth-callback?code=1", "http://"),
+            ("ftp://localhost:13035/oauth-callback", "http://"),
+            ("http:///oauth-callback?code=1", "主机名"),
+            ("localhost:13035", "缺少回调路径"),
+            ("http://localhost:13035?state=LU", "缺少回调路径"),
+            ("http://localhost:13035/oauth callback?state=LU", "空格")
+        ]
+        for (rawInvalid, expectedFragment) in invalidInputs {
+            let norm = OAuthCallbackHelper.normalize(rawInvalid)
+            let err = OAuthCallbackHelper.validate(norm)
+            precondition(err != nil && err!.contains(expectedFragment), "Validation for \(rawInvalid) -> \(norm) expected fragment \(expectedFragment), got \(String(describing: err))")
+        }
+
+        precondition(OAuthCallbackHelper.detectedCallbackURL(from: "https://www.google.com/search?q=magpie") == nil)
+
+        let mapped400 = OAuthCallbackHelper.mapServerCallbackError(
+            statusCode: 400,
+            message: "paste the whole address the browser ended on, starting with http://"
+        )
+        precondition(mapped400.summary.contains("http://"), "Mapped 400 must guide user in Chinese")
+        precondition(mapped400.rawDetail == "paste the whole address the browser ended on, starting with http://", "Raw detail must be preserved")
+
+        let mappedCode = OAuthCallbackHelper.mapServerCallbackError(statusCode: 400, message: "missing code parameter")
+        precondition(mappedCode.summary.contains("授权码") && mappedCode.rawDetail == "missing code parameter")
+
+        let mappedState = OAuthCallbackHelper.mapServerCallbackError(statusCode: 400, message: "oauth state mismatch")
+        precondition(mappedState.summary.contains("state") && mappedState.rawDetail == "oauth state mismatch")
+
+        print("PASS: OAuth callback normalization, validation & 400 mapping (21 assertions)")
         print("PASS: OAuth sign-in, 19+ platform catalog, plugin prompts, multi-account logins & usage")
         print("PASS: origins, console routes, preserved provider fields, caller budgets")
         print("PASS: routing conditions, shared agent options, group disabled/off compatibility, numeric balance")

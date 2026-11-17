@@ -51,6 +51,9 @@ struct SubscriptionSignInSheet: View {
 
     // Callback / token / GHE drafts
     @State private var callbackInput: String = ""
+    @State private var callbackValidationError: String? = nil
+    @State private var validatedCallbackSnapshot: String? = nil
+    @State private var callbackServerErrorRaw: String? = nil
     @State private var isSubmittingCallback = false
     @State private var claudeTokenInput: String = ""
     @State private var gheHostInput: String = ""
@@ -117,6 +120,11 @@ struct SubscriptionSignInSheet: View {
         !existingLogins.isEmpty
     }
 
+    private var isCallbackURLMode: Bool {
+        guard let st = signInState else { return false }
+        return !st.pasteKey && !st.pasteCode
+    }
+
     private var effectiveProxyValue: String? {
         switch selectedProxyMode {
         case "":
@@ -162,6 +170,12 @@ struct SubscriptionSignInSheet: View {
             }
             .onAppear { setupInitialPhase() }
             .onDisappear { pollTask?.cancel() }
+            .onChange(of: callbackInput) { newValue in
+                if let snap = validatedCallbackSnapshot, newValue != snap {
+                    callbackValidationError = nil
+                    validatedCallbackSnapshot = nil
+                }
+            }
             .sheet(item: $safariURL) { item in
                 SignInSafariView(url: item.url)
             }
@@ -821,15 +835,29 @@ struct SubscriptionSignInSheet: View {
                             HStack(spacing: 8) {
                                 Button("从剪贴板粘贴") {
                                     if let str = UIPasteboard.general.string {
-                                        callbackInput = str.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        if isCallbackURLMode {
+                                            let normalized = OAuthCallbackHelper.normalize(str)
+                                            callbackInput = normalized
+                                            errorText = nil
+                                            callbackServerErrorRaw = nil
+                                            let validationErr = normalized.isEmpty ? nil : OAuthCallbackHelper.validate(normalized)
+                                            validatedCallbackSnapshot = normalized
+                                            callbackValidationError = validationErr
+                                        } else {
+                                            callbackInput = str.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        }
                                     }
                                 }
                                 .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
 
-                                if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-                                   clip.contains("code=") || clip.hasPrefix("http://localhost") || clip.hasPrefix("http://127.0.0.1") {
+                                if isCallbackURLMode,
+                                   let rawClip = UIPasteboard.general.string,
+                                   let quickCallback = OAuthCallbackHelper.detectedCallbackURL(from: rawClip) {
                                     Button("检测到回调链接，一键提交") {
-                                        callbackInput = clip
+                                        callbackInput = quickCallback
+                                        callbackValidationError = nil
+                                        validatedCallbackSnapshot = nil
+                                        callbackServerErrorRaw = nil
                                         submitCallback()
                                     }
                                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
@@ -844,18 +872,23 @@ struct SubscriptionSignInSheet: View {
                                 isSecure: st.pasteKey,
                                 monospaced: true,
                                 keyboardType: st.pasteCallback ? .URL : .default,
+                                errorText: isCallbackURLMode ? callbackValidationError : nil,
                                 accessibilityId: "oauthCallbackField"
                             )
 
                             if let err = errorText {
-                                MagpieErrorBanner(title: "回调提交失败", message: err)
+                                MagpieErrorBanner(
+                                    title: "回调提交失败",
+                                    message: err,
+                                    detail: isCallbackURLMode ? callbackServerErrorRaw : nil
+                                )
                             }
 
                             Button(isSubmittingCallback ? "正在向服务端校验..." : "提交并完成登录") {
                                 submitCallback()
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .primary))
-                            .disabled(isSubmittingCallback || callbackInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(isSubmittingCallback || callbackInput.trimmingCharacters(in: OAuthCallbackHelper.trimCharacterSet).isEmpty)
                         }
                     }
 
@@ -869,6 +902,10 @@ struct SubscriptionSignInSheet: View {
                         Spacer()
                         Button("取消登录") {
                             cancelActiveSignInIfNeeded()
+                            callbackValidationError = nil
+                            validatedCallbackSnapshot = nil
+                            callbackServerErrorRaw = nil
+                            errorText = nil
                             phase = .launcher
                         }
                         .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
@@ -1083,6 +1120,9 @@ struct SubscriptionSignInSheet: View {
                     Button("继续添加下一个账号") {
                         signInState = nil
                         callbackInput = ""
+                        callbackValidationError = nil
+                        validatedCallbackSnapshot = nil
+                        callbackServerErrorRaw = nil
                         errorText = nil
                         phase = .launcher
                     }
@@ -1170,6 +1210,9 @@ struct SubscriptionSignInSheet: View {
         cancelActiveSignInIfNeeded()
         errorText = nil
         callbackInput = ""
+        callbackValidationError = nil
+        validatedCallbackSnapshot = nil
+        callbackServerErrorRaw = nil
         phase = .starting
         Task {
             do {
@@ -1393,13 +1436,33 @@ struct SubscriptionSignInSheet: View {
 
     private func submitCallback() {
         guard let id = signInState?.id, !id.isEmpty else { return }
-        let raw = callbackInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return }
+        let urlMode = isCallbackURLMode
+        let payloadValue: String
+        if urlMode {
+            let normalized = OAuthCallbackHelper.normalize(callbackInput)
+            callbackInput = normalized
+            if let validationMessage = OAuthCallbackHelper.validate(normalized) {
+                validatedCallbackSnapshot = normalized
+                callbackValidationError = validationMessage
+                errorText = nil
+                callbackServerErrorRaw = nil
+                return
+            }
+            callbackValidationError = nil
+            validatedCallbackSnapshot = nil
+            payloadValue = normalized
+        } else {
+            let raw = callbackInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !raw.isEmpty else { return }
+            payloadValue = raw
+        }
+
         isSubmittingCallback = true
         errorText = nil
+        callbackServerErrorRaw = nil
         Task {
             do {
-                try await store.client.submitSignInCallback(id: id, url: raw)
+                try await store.client.submitSignInCallback(id: id, url: payloadValue)
                 let st = try await store.client.getSignInStatus(id: id)
                 await MainActor.run {
                     isSubmittingCallback = false
@@ -1414,7 +1477,16 @@ struct SubscriptionSignInSheet: View {
             } catch {
                 await MainActor.run {
                     isSubmittingCallback = false
-                    self.errorText = error.localizedDescription
+                    if urlMode,
+                       let webErr = error as? MagpieWebError,
+                       case let .httpError(statusCode, rawMsg) = webErr {
+                        let mapped = OAuthCallbackHelper.mapServerCallbackError(statusCode: statusCode, message: rawMsg)
+                        self.errorText = mapped.summary
+                        self.callbackServerErrorRaw = mapped.rawDetail
+                    } else {
+                        self.errorText = error.localizedDescription
+                        self.callbackServerErrorRaw = nil
+                    }
                 }
             }
         }
