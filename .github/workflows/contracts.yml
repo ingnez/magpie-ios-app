@@ -1,0 +1,13 @@
+name: Model Contracts
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  contracts:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run backend model contract tests
+        run: |
+          swiftc Magpie/Core/MagpieWebModels.swift Tests/ModelContractTests.swift -o /tmp/magpie-contracts
+          /tmp/magpie-contracts
