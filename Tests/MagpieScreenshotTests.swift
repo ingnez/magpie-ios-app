@@ -97,7 +97,9 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("关闭", app: app); tap("关闭", app: app)
 
         tab("providers", app: app)
-        tap("管理", app: app)
+        let firstManage = app.buttons.matching(identifier: "管理").element(boundBy: 0)
+        XCTAssertTrue(firstManage.waitForExistence(timeout: 10), "Missing first 管理 button")
+        firstManage.tap()
         shot("05-provider-policy-demo")
         tap("多 Key 号池", app: app)
         shot("06-provider-multikey-demo")
@@ -199,6 +201,32 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("上下文调优", app: app, scroll: true)
         XCTAssertTrue(app.webViews.staticTexts["上下文页签选择通过"].waitForExistence(timeout: 60))
         shot("20-console-context-selection-demo")
+        tab("providers", app: app)
+        tap("OAuth 授权", app: app)
+        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
+        shot("26-oauth-platforms-demo")
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
+        if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
+            tap("仍然继续授权", app: app)
+        }
+        tap("发起浏览器 OAuth 授权登录", app: app)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        shot("27-antigravity-oauth-demo")
+        tap("关闭", app: app)
+
+        let manageButtons = app.buttons.matching(identifier: "管理")
+        XCTAssertGreaterThan(manageButtons.count, 1, "Expected second provider (Antigravity)")
+        let agyManage = manageButtons.element(boundBy: 1)
+        for _ in 0..<4 where !agyManage.isHittable { app.swipeUp() }
+        if agyManage.isHittable { agyManage.tap() } else { agyManage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
+        tap("多账号号池", app: app)
+        XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
+        shot("28-subscription-multi-account-demo")
+        tap("关闭", app: app)
+        let signInReq = payload("/api/signin")
+        XCTAssertEqual(signInReq["agent"] as? String, "antigravity")
+
         let provider = payload("/api/provider/save")
         XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
         XCTAssertEqual(provider["models"] as? [String], ["gpt-demo"])

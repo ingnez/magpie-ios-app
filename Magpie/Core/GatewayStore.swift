@@ -17,6 +17,18 @@ final class GatewayStore: ObservableObject {
     @Published var providers: [RemoteProvider] = []
     @Published var presets: [RemotePreset] = []
     @Published var gatewayStatus: RemoteGatewayStatus?
+    @Published var pluginSubs: [RemotePluginSub] = []
+    @Published var onPlugins: [String] = []
+    @Published var movableSubs: [String] = []
+    @Published var movesTo: [String: String] = [:]
+    @Published var unmovedSubs: [RemoteMoveCandidate] = []
+    @Published var withdrawnPlugins: [RemoteWithdrawnPlugin] = []
+    @Published var agyMoveUsers: [String] = []
+    @Published var excludedAccounts: [RemoteExcludedAccount] = []
+    @Published var codexDaemonStale: String?
+    @Published var codexAppStale: String?
+    @Published var codexProjectsShort: Bool = false
+    @Published var loginUsageByAgent: [String: [String: RemoteLoginQuota]] = [:]
     @Published var groups: [RemoteRoutingGroup] = []
     @Published var groupModels: [RemoteGroupModelRef] = []
     @Published var groupDeciders: [RemoteGroupModelRef] = []
@@ -378,6 +390,17 @@ final class GatewayStore: ObservableObject {
         if let gw = resp.gateway {
             gatewayStatus = gw
         }
+        pluginSubs = resp.plugins
+        onPlugins = resp.onPlugins
+        movableSubs = resp.movable
+        movesTo = resp.movesTo
+        unmovedSubs = resp.unmoved
+        withdrawnPlugins = resp.withdrawn
+        agyMoveUsers = resp.agyMove
+        excludedAccounts = resp.excluded
+        codexDaemonStale = resp.codexDaemon
+        codexAppStale = resp.codexApp
+        codexProjectsShort = resp.codexProjects
     }
 
     func applyGroupsResponse(_ resp: RemoteGroupsResponse) {

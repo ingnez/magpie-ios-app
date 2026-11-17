@@ -52,6 +52,31 @@ struct ModelContractTests {
         let portWrap = try decode(RemotePortUpdateResponse.self, #"{"settings":{"port":3426,"lan":true},"port":{"ok":true}}"#)
         precondition(portWrap.settings.port == 3426 && portWrap.settings.lan == true)
 
+        let providersResp = try decode(RemoteProvidersResponse.self, #"{"providers":[{"id":"antigravity","name":"Antigravity","account":{"agent":"antigravity","agentName":"Antigravity","user":"a@gmail.com","plan":"Google AI Pro","logins":[{"agent":"antigravity","user":"a@gmail.com","plan":"Google AI Pro","active":true,"on":true},{"agent":"antigravity","user":"b@gmail.com","plan":"free","active":false,"on":true,"lapsed":"expired"}]},"accountProxies":{"a@gmail.com":"@px1"},"keepLogin":true,"capStop":true}],"presets":[],"plugins":[{"id":"trae-cn","pid":"trae-cn","name":"Trae CN","icon":"trae","spec":"@magpie/trae","methods":[{"type":"oauth","label":"Browser","labels":{"zh":"浏览器授权"}}],"signedIn":false,"models":3,"importable":false}],"onPlugins":["claude"],"agyMove":["a@gmail.com"],"codexDaemon":"old@example.com"}"#)
+        precondition(providersResp.providers.count == 1 && providersResp.providers[0].account?.logins.count == 2)
+        precondition(providersResp.providers[0].account?.logins[1].lapsed == "expired")
+        precondition(providersResp.providers[0].keepLogin && providersResp.providers[0].capStop)
+        precondition(providersResp.plugins.count == 1 && providersResp.plugins[0].methods[0].localizedLabel == "浏览器授权")
+        precondition(providersResp.onPlugins == ["claude"] && providersResp.agyMove == ["a@gmail.com"])
+        precondition(providersResp.codexDaemon == "old@example.com")
+
+        let signIn = try decode(RemoteSignInState.self, #"{"id":"s1","agent":"antigravity","url":"https://accounts.google.com/o/oauth2/v2/auth?client_id=123","state":"waiting","pasteCallback":true,"callbackPort":54321}"#)
+        precondition(signIn.id == "s1" && signIn.pasteCallback && signIn.callbackPort == 54321)
+
+        let promptResp = try decode(RemotePluginPromptResponse.self, #"{"prompt":{"type":"select","key":"region","message":"Select region","messages":{"zh":"选择区域"},"options":[{"label":"Global","value":"global","labels":{"zh":"国际站"}}]},"inputs":{"foo":"bar"}}"#)
+        precondition(promptResp.prompt?.localizedMessage == "选择区域" && promptResp.prompt?.options[0].localizedLabel == "国际站")
+
+        let loginUsage = try decode([String: RemoteLoginQuota].self, #"{"a@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"antigravity-color","plan":"Google AI Pro","user":"a@gmail.com","windows":[{"name":"Gemini","used":35.5,"pool":"Gemini","capId":"gemini"}]}}"#)
+        precondition(loginUsage["a@gmail.com"]?.windows.first?.used == 35.5)
+
+        let allSubs = SubscriptionCatalog.allPlatforms(plugins: providersResp.plugins, onPlugins: providersResp.onPlugins)
+        precondition(allSubs.builtins.count == 19, "Expected all 19 built-in Magpie OAuth/subscription platforms")
+        precondition(allSubs.builtins.contains(where: { $0.agent == "antigravity" }))
+        precondition(allSubs.builtins.contains(where: { $0.agent == "codex" }))
+        precondition(allSubs.builtins.first(where: { $0.agent == "claude" })?.movedToPlugin == true)
+        precondition(allSubs.extraPlugins.count == 1 && allSubs.extraPlugins[0].agent == "trae-cn")
+
+        print("PASS: OAuth sign-in, 19+ platform catalog, plugin prompts, multi-account logins & usage")
         print("PASS: origins, console routes, preserved provider fields, caller budgets")
         print("PASS: routing conditions, shared agent options, group disabled/off compatibility, numeric balance")
         print("PASS: proxies, autobackup, davsync, context tune, model price snake_case keys, and port wrapper")

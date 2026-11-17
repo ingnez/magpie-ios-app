@@ -18,6 +18,15 @@ struct ProviderDetailSheet: View {
     @State private var isCheckingBalance = false
     @State private var testOutput: String?
     @State private var confirmDelete = false
+    @State private var signInRequest: SignInSheetRequest?
+
+    private struct SignInSheetRequest: Identifiable {
+        let id = UUID()
+        let platform: SubscriptionPlatform
+        let mode: SubscriptionSignInSheet.InitialMode
+        let forUser: String?
+        let defaultProxy: String?
+    }
 
     // Key pool states
     @State private var newKeyName = ""
@@ -116,7 +125,7 @@ struct ProviderDetailSheet: View {
             if let p = provider {
                 VStack(spacing: 0) {
                     sheetHeader(p)
-                    subTabBar
+                    subTabBar(p)
                     ScrollView(showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 18) {
                             switch activeTab {
@@ -159,6 +168,15 @@ struct ProviderDetailSheet: View {
         }
         .sheet(item: $editingModel) { model in
             modelEditorSheet(model)
+        }
+        .sheet(item: $signInRequest) { req in
+            SubscriptionSignInSheet(
+                store: store,
+                platform: req.platform,
+                initialMode: req.mode,
+                forUser: req.forUser,
+                defaultProxy: req.defaultProxy
+            )
         }
         .alert("删除供应商？", isPresented: $confirmDelete) {
             Button("删除", role: .destructive) {
@@ -210,12 +228,13 @@ struct ProviderDetailSheet: View {
         .overlay(Rectangle().fill(MagpieTheme.hairline).frame(height: 1), alignment: .bottom)
     }
 
-    private var subTabBar: some View {
+    private func subTabBar(_ p: RemoteProvider) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(DetailTab.allCases, id: \.self) { tab in
                     let selected = activeTab == tab
-                    Button(tab.rawValue) {
+                    let label = (tab == .keys && p.account != nil) ? "多账号号池" : tab.rawValue
+                    Button(label) {
                         activeTab = tab
                     }
                     .font(.system(size: 12.5, weight: .medium))
@@ -432,25 +451,24 @@ struct ProviderDetailSheet: View {
     private func keysSection(_ p: RemoteProvider) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             if let acc = p.account {
-                MinimalSection(title: "订阅账号", trailingText: acc.plan ?? acc.agent) {
-                    Text(acc.user ?? acc.agentName ?? p.name)
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                        .foregroundColor(MagpieTheme.ink)
-                    if !p.accountRests.isEmpty {
-                        ForEach(Array(p.accountRests.keys.sorted()), id: \.self) { accKey in
-                            if let rests = p.accountRests[accKey], !rests.isEmpty {
-                                ForEach(Array(rests.enumerated()), id: \.offset) { _, r in
-                                    Text("冷却中（\(accKey)）：\(r.why ?? "限流") \(r.until ?? "")")
-                                        .font(.system(size: 11.5))
-                                        .foregroundColor(MagpieTheme.warn)
-                                }
-                            }
-                        }
-                    }
+                SubscriptionAccountsSection(store: store, provider: p, account: acc) { mode, user, proxy in
+                    let agent = acc.agent ?? p.id
+                    let platform = SubscriptionCatalog.resolve(
+                        agent: agent,
+                        plugins: store.pluginSubs,
+                        onPlugins: store.onPlugins
+                    )
+                    signInRequest = SignInSheetRequest(
+                        platform: platform,
+                        mode: mode,
+                        forUser: user,
+                        defaultProxy: proxy
+                    )
                 }
             }
 
-            MinimalSection(title: "API Key 号池 (\(p.keyList.count))", trailingText: p.routing.isEmpty ? "smart" : p.routing) {
+            if p.account == nil || !p.keyList.isEmpty {
+                MinimalSection(title: "API Key 号池 (\(p.keyList.count))", trailingText: p.routing.isEmpty ? "smart" : p.routing) {
                 HStack(spacing: 8) {
                     Button(showingAddKeyForm ? "收起添加" : "添加 Key") {
                         showingAddKeyForm.toggle()
@@ -532,16 +550,17 @@ struct ProviderDetailSheet: View {
                     }
                 }
 
-                if p.keyList.isEmpty {
-                    Text(p.account != nil ? "当前为订阅账号认证，无需 API Key" : "暂无多 Key 记录")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(MagpieTheme.textMuted)
-                } else {
-                    ForEach(Array(p.keyList.enumerated()), id: \.element.id) { idx, k in
-                        if idx > 0 {
-                            Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                    if p.keyList.isEmpty {
+                        Text("暂无多 Key 记录")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(MagpieTheme.textMuted)
+                    } else {
+                        ForEach(Array(p.keyList.enumerated()), id: \.element.id) { idx, k in
+                            if idx > 0 {
+                                Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                            }
+                            keyRow(p, keyInfo: k)
                         }
-                        keyRow(p, keyInfo: k)
                     }
                 }
             }

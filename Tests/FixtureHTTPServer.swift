@@ -114,6 +114,25 @@ final class FixtureHTTPServer {
         else if path == "/api/gateway/pause" { json(connection, ["paused": (payload["on"] as? Bool) ?? false, "agents": ["claude"]]) }
         else if path == "/api/gateway/unrest" { json(connection, ["lifted": true]) }
         else if path == "/api/usage/clear" || path == "/api/usage/codex-reset" { json(connection, ["ok": true]) }
+        else if path == "/api/signin" || path == "/api/plugin-signin" {
+            var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
+            if let ag = payload["agent"] as? String { st["agent"] = ag }
+            json(connection, st)
+        }
+        else if path == "/api/signin/s1/cancel" || path == "/api/signin/s1/callback" { json(connection, [:]) }
+        else if path == "/api/signin/claude-token" { json(connection, ["user": "claude-token-demo"]) }
+        else if path == "/api/signin/import" {
+            json(connection, ["results": [["user": "imported@gmail.com", "status": "added"]], "providers": responses["/api/providers"]!])
+        }
+        else if path == "/api/signin/export" {
+            json(connection, ["path": "~/Downloads/magpie-export.json", "accounts": ["demo1@gmail.com"], "skipped": []])
+        }
+        else if path == "/api/plugin-signin/prompt" {
+            json(connection, ["inputs": payload["inputs"] ?? [:]])
+        }
+        else if path.hasPrefix("/api/login/") || path.hasPrefix("/api/codex/daemon/") {
+            json(connection, responses["/api/providers"]!)
+        }
         else if path.hasPrefix("/api/caller-keys/") { json(connection, responses["/api/caller-keys"]!) }
         else { json(connection, responses["/api/state"]!) }
     }

@@ -79,6 +79,70 @@ PROVIDER = {
     ],
     "exposed": 1
 }
+AGY_PROVIDER = {
+    "id": "antigravity",
+    "name": "Antigravity (谷歌反重力)",
+    "ready": True,
+    "routing": "usage",
+    "models": [
+        {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "on": True, "context": 1000000}
+    ],
+    "exposed": 1,
+    "account": {
+        "agent": "antigravity",
+        "agentName": "Antigravity",
+        "user": "demo1@gmail.com",
+        "plan": "Google AI Pro",
+        "logins": [
+            {"agent": "antigravity", "user": "demo1@gmail.com", "plan": "Google AI Pro", "active": True, "on": True},
+            {"agent": "antigravity", "user": "demo2@gmail.com", "plan": "free", "active": False, "on": True}
+        ]
+    },
+    "accountWeights": {"demo1@gmail.com": 2}
+}
+PLUGIN_SUB = {
+    "id": "trae-cn",
+    "pid": "trae-cn",
+    "name": "Trae CN",
+    "icon": "trae",
+    "spec": "@magpie-community/trae-cn",
+    "methods": [{"type": "oauth", "label": "Browser", "labels": {"zh": "浏览器 OAuth 授权"}}],
+    "signedIn": False,
+    "models": 2,
+    "importable": False
+}
+SIGNIN_STATE = {
+    "id": "s1",
+    "agent": "antigravity",
+    "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=demo&redirect_uri=http://127.0.0.1:54321/callback",
+    "state": "waiting",
+    "pasteCallback": True,
+    "callbackPort": 54321,
+    "linkOnly": True
+}
+LOGIN_USAGE = {
+    "demo1@gmail.com": {
+        "provider": "antigravity",
+        "name": "Antigravity",
+        "icon": "antigravity-color",
+        "plan": "Google AI Pro",
+        "user": "demo1@gmail.com",
+        "windows": [
+            {"name": "5小时额度", "used": 28.0, "capId": "5h"},
+            {"name": "周额度", "used": 14.0, "capId": "7d"}
+        ]
+    },
+    "demo2@gmail.com": {
+        "provider": "antigravity",
+        "name": "Antigravity",
+        "icon": "antigravity-color",
+        "plan": "free",
+        "user": "demo2@gmail.com",
+        "windows": [
+            {"name": "5小时额度", "used": 62.0, "capId": "5h"}
+        ]
+    }
+}
 PRESET = {
     "id": "deepseek",
     "name": "DeepSeek",
@@ -240,7 +304,9 @@ PRIVACY_MODEL = {
 RESPONSES = {
     "/api/state": STATE,
     "/api/settings": SETTINGS,
-    "/api/providers": {"providers": [PROVIDER], "presets": [PRESET], "gateway": {"running": True, "url": "http://127.0.0.1:3425"}},
+    "/api/providers": {"providers": [PROVIDER, AGY_PROVIDER], "presets": [PRESET], "plugins": [PLUGIN_SUB], "gateway": {"running": True, "url": "http://127.0.0.1:3425"}},
+    "/api/login/usage": LOGIN_USAGE,
+    "/api/signin/s1": SIGNIN_STATE,
     "/api/groups": {
         "groups": [GROUP],
         "models": [{"id": "demo/gpt-demo", "name": "GPT 演示模型", "provider": "demo", "providerName": "OpenAI 演示"}],
@@ -354,6 +420,23 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"ok": True})
         elif path.startswith("/api/caller-keys/"):
             self.reply({"keys": [KEY], "secret": ""})
+        elif path == "/api/signin" or path == "/api/plugin-signin":
+            st = dict(SIGNIN_STATE)
+            if body.get("agent"):
+                st["agent"] = body["agent"]
+            self.reply(st)
+        elif path == "/api/signin/s1/cancel" or path == "/api/signin/s1/callback":
+            self.reply({})
+        elif path == "/api/signin/claude-token":
+            self.reply({"user": "claude-token-demo"})
+        elif path == "/api/signin/import":
+            self.reply({"results": [{"user": "imported@gmail.com", "status": "added"}], "providers": RESPONSES["/api/providers"]})
+        elif path == "/api/signin/export":
+            self.reply({"path": "~/Downloads/magpie-export.json", "accounts": ["demo1@gmail.com"], "skipped": []})
+        elif path == "/api/plugin-signin/prompt":
+            self.reply({"prompt": None, "inputs": body.get("inputs", {})})
+        elif path.startswith("/api/login/") or path.startswith("/api/codex/daemon/"):
+            self.reply(RESPONSES["/api/providers"])
         elif path.startswith("/api/agents/") or path == "/api/set" or path.startswith("/api/profile/") or path == "/api/sync":
             self.reply(STATE)
         else:

@@ -694,9 +694,19 @@ struct RemoteProvidersResponse: Decodable {
     let gateway: RemoteGatewayStatus?
     let codexDaemon: String?
     let codexApp: String?
+    let codexProjects: Bool
+    let plugins: [RemotePluginSub]
+    let onPlugins: [String]
+    let movable: [String]
+    let movesTo: [String: String]
+    let unmoved: [RemoteMoveCandidate]
+    let withdrawn: [RemoteWithdrawnPlugin]
+    let agyMove: [String]
+    let excluded: [RemoteExcludedAccount]
 
     enum CodingKeys: String, CodingKey {
-        case providers, presets, gateway, codexDaemon, codexApp
+        case providers, presets, gateway, codexDaemon, codexApp, codexProjects
+        case plugins, onPlugins, movable, movesTo, unmoved, withdrawn, agyMove, excluded
     }
 
     init(from decoder: Decoder) throws {
@@ -706,6 +716,15 @@ struct RemoteProvidersResponse: Decodable {
         gateway = try c.decodeIfPresent(RemoteGatewayStatus.self, forKey: .gateway)
         codexDaemon = try c.decodeIfPresent(String.self, forKey: .codexDaemon)
         codexApp = try c.decodeIfPresent(String.self, forKey: .codexApp)
+        codexProjects = try c.decodeIfPresent(Bool.self, forKey: .codexProjects) ?? false
+        plugins = try c.decodeIfPresent([RemotePluginSub].self, forKey: .plugins) ?? []
+        onPlugins = try c.decodeIfPresent([String].self, forKey: .onPlugins) ?? []
+        movable = try c.decodeIfPresent([String].self, forKey: .movable) ?? []
+        movesTo = try c.decodeIfPresent([String: String].self, forKey: .movesTo) ?? [:]
+        unmoved = try c.decodeIfPresent([RemoteMoveCandidate].self, forKey: .unmoved) ?? []
+        withdrawn = try c.decodeIfPresent([RemoteWithdrawnPlugin].self, forKey: .withdrawn) ?? []
+        agyMove = try c.decodeIfPresent([String].self, forKey: .agyMove) ?? []
+        excluded = try c.decodeIfPresent([RemoteExcludedAccount].self, forKey: .excluded) ?? []
     }
 }
 
@@ -838,6 +857,21 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
     let maxAccounts: Int?
     let maxRPM: Int?
     let proxy: String
+    let keepLogin: Bool
+    let keepLoginAs: String
+    let switchOnly: Bool
+    let restartApp: Bool
+    let capStop: Bool
+    let capCareful: Bool
+    let accountProxies: [String: String]
+    let accountCaps: [String: Int]
+    let accountWindowCaps: [String: [String: Int]]
+    let accountWindowAmounts: [String: [String: Double]]
+    let accountSeats: [String: String]
+    let accountUsers: [String: String]
+    let accountConcurrency: [String: Int]
+    let proxyGone: String?
+    let move: RemoteProviderMove?
 
     enum CodingKeys: String, CodingKey {
         case id, name, icon, preset, host, chat, responses, anthropic, gemini, decide, baseAPI
@@ -849,6 +883,9 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
         case exposed, models, key, anonKey, keyList, account
         case accountModels, accountNames, accountWeights, accountRests
         case listError, priceRate, maxConcurrency, maxAccounts, maxRPM, proxy
+        case keepLogin, keepLoginAs, switchOnly, restartApp, capStop, capCareful
+        case accountProxies, accountCaps, accountWindowCaps, accountWindowAmounts
+        case accountSeats, accountUsers, accountConcurrency, proxyGone, move
     }
 
     init(from decoder: Decoder) throws {
@@ -913,6 +950,21 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
         maxAccounts = try c.decodeIfPresent(Int.self, forKey: .maxAccounts)
         maxRPM = try c.decodeIfPresent(Int.self, forKey: .maxRPM)
         proxy = try c.decodeIfPresent(String.self, forKey: .proxy) ?? ""
+        keepLogin = try c.decodeIfPresent(Bool.self, forKey: .keepLogin) ?? false
+        keepLoginAs = try c.decodeIfPresent(String.self, forKey: .keepLoginAs) ?? ""
+        switchOnly = try c.decodeIfPresent(Bool.self, forKey: .switchOnly) ?? false
+        restartApp = try c.decodeIfPresent(Bool.self, forKey: .restartApp) ?? false
+        capStop = try c.decodeIfPresent(Bool.self, forKey: .capStop) ?? false
+        capCareful = try c.decodeIfPresent(Bool.self, forKey: .capCareful) ?? false
+        accountProxies = try c.decodeIfPresent([String: String].self, forKey: .accountProxies) ?? [:]
+        accountCaps = try c.decodeIfPresent([String: Int].self, forKey: .accountCaps) ?? [:]
+        accountWindowCaps = try c.decodeIfPresent([String: [String: Int]].self, forKey: .accountWindowCaps) ?? [:]
+        accountWindowAmounts = try c.decodeIfPresent([String: [String: Double]].self, forKey: .accountWindowAmounts) ?? [:]
+        accountSeats = try c.decodeIfPresent([String: String].self, forKey: .accountSeats) ?? [:]
+        accountUsers = try c.decodeIfPresent([String: String].self, forKey: .accountUsers) ?? [:]
+        accountConcurrency = try c.decodeIfPresent([String: Int].self, forKey: .accountConcurrency) ?? [:]
+        proxyGone = try c.decodeIfPresent(String.self, forKey: .proxyGone)
+        move = try c.decodeIfPresent(RemoteProviderMove.self, forKey: .move)
     }
 
     var primaryEndpointPreview: String {
@@ -1003,6 +1055,468 @@ struct RemoteProviderAccount: Decodable, Equatable {
     let agentName: String?
     let user: String?
     let plan: String?
+    let logins: [RemoteProviderLogin]
+    let builtin: String?
+    let wsl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case agent, agentName, user, plan, logins, builtin, wsl
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try c.decodeIfPresent(String.self, forKey: .agent)
+        agentName = try c.decodeIfPresent(String.self, forKey: .agentName)
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        logins = try c.decodeIfPresent([RemoteProviderLogin].self, forKey: .logins) ?? []
+        builtin = try c.decodeIfPresent(String.self, forKey: .builtin)
+        wsl = try c.decodeIfPresent(String.self, forKey: .wsl)
+    }
+}
+
+struct RemoteProviderLogin: Decodable, Identifiable, Equatable {
+    var id: String { "\(agent)|\(user)" }
+    let agent: String
+    let user: String
+    let plan: String?
+    let seen: String?
+    let active: Bool
+    let on: Bool
+    let lapsed: String?
+    let until: String?
+    let own: Bool
+    let paused: Bool
+    let returns: Bool
+    let token: Bool
+    let uses: Bool
+    let accessOnly: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case agent, user, plan, seen, active, on, lapsed, until, own, paused, returns, token, uses, accessOnly
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? ""
+        user = try c.decodeIfPresent(String.self, forKey: .user) ?? ""
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        seen = try c.decodeIfPresent(String.self, forKey: .seen)
+        active = try c.decodeIfPresent(Bool.self, forKey: .active) ?? false
+        on = try c.decodeIfPresent(Bool.self, forKey: .on) ?? false
+        lapsed = try c.decodeIfPresent(String.self, forKey: .lapsed)
+        until = try c.decodeIfPresent(String.self, forKey: .until)
+        own = try c.decodeIfPresent(Bool.self, forKey: .own) ?? false
+        paused = try c.decodeIfPresent(Bool.self, forKey: .paused) ?? false
+        returns = try c.decodeIfPresent(Bool.self, forKey: .returns) ?? false
+        token = try c.decodeIfPresent(Bool.self, forKey: .token) ?? false
+        uses = try c.decodeIfPresent(Bool.self, forKey: .uses) ?? false
+        accessOnly = try c.decodeIfPresent(Bool.self, forKey: .accessOnly) ?? false
+    }
+}
+
+// MARK: - OAuth Sign-In, Plugins, Login Quota & Account Migration
+
+struct RemotePluginMethod: Decodable, Equatable {
+    let type: String
+    let label: String
+    let labels: [String: String]
+    let placeholder: String?
+    let keyless: Bool
+    let keyAsked: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case type, label, labels, placeholder, keyless, keyAsked
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decodeIfPresent(String.self, forKey: .type) ?? "oauth"
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        labels = try c.decodeIfPresent([String: String].self, forKey: .labels) ?? [:]
+        placeholder = try c.decodeIfPresent(String.self, forKey: .placeholder)
+        keyless = try c.decodeIfPresent(Bool.self, forKey: .keyless) ?? false
+        keyAsked = try c.decodeIfPresent(Bool.self, forKey: .keyAsked) ?? false
+    }
+
+    var localizedLabel: String {
+        labels["zh"] ?? labels["zh-CN"] ?? (label.isEmpty ? (type == "api" ? "API Key" : "浏览器授权") : label)
+    }
+}
+
+struct RemotePluginSub: Decodable, Identifiable, Equatable {
+    let id: String
+    let pid: String
+    let name: String
+    let icon: String
+    let spec: String
+    let methods: [RemotePluginMethod]
+    let signedIn: Bool
+    let single: Bool
+    let models: Int
+    let importable: Bool
+    let importFrom: String?
+    let importFroms: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case id, pid, name, icon, spec, methods, signedIn, single, models, importable, importFrom, importFroms
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        pid = try c.decodeIfPresent(String.self, forKey: .pid) ?? id
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? id
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "generic"
+        spec = try c.decodeIfPresent(String.self, forKey: .spec) ?? ""
+        methods = try c.decodeIfPresent([RemotePluginMethod].self, forKey: .methods) ?? []
+        signedIn = try c.decodeIfPresent(Bool.self, forKey: .signedIn) ?? false
+        single = try c.decodeIfPresent(Bool.self, forKey: .single) ?? false
+        models = try c.decodeIfPresent(Int.self, forKey: .models) ?? 0
+        importable = try c.decodeIfPresent(Bool.self, forKey: .importable) ?? false
+        importFrom = try c.decodeIfPresent(String.self, forKey: .importFrom)
+        importFroms = try c.decodeIfPresent([String: String].self, forKey: .importFroms) ?? [:]
+    }
+}
+
+struct RemotePluginPromptOption: Decodable, Equatable {
+    let label: String
+    let value: String
+    let hint: String?
+    let labels: [String: String]
+    let hints: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case label, value, hint, labels, hints
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        value = try c.decodeIfPresent(String.self, forKey: .value) ?? ""
+        hint = try c.decodeIfPresent(String.self, forKey: .hint)
+        labels = try c.decodeIfPresent([String: String].self, forKey: .labels) ?? [:]
+        hints = try c.decodeIfPresent([String: String].self, forKey: .hints) ?? [:]
+    }
+
+    var localizedLabel: String {
+        labels["zh"] ?? labels["zh-CN"] ?? label
+    }
+
+    var localizedHint: String? {
+        hints["zh"] ?? hints["zh-CN"] ?? hint
+    }
+}
+
+struct RemotePluginPrompt: Decodable, Equatable {
+    let type: String
+    let key: String
+    let message: String
+    let messages: [String: String]
+    let placeholder: String?
+    let options: [RemotePluginPromptOption]
+
+    enum CodingKeys: String, CodingKey {
+        case type, key, message, messages, placeholder, options
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        type = try c.decodeIfPresent(String.self, forKey: .type) ?? "text"
+        key = try c.decodeIfPresent(String.self, forKey: .key) ?? ""
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+        messages = try c.decodeIfPresent([String: String].self, forKey: .messages) ?? [:]
+        placeholder = try c.decodeIfPresent(String.self, forKey: .placeholder)
+        options = try c.decodeIfPresent([RemotePluginPromptOption].self, forKey: .options) ?? []
+    }
+
+    var localizedMessage: String {
+        messages["zh"] ?? messages["zh-CN"] ?? message
+    }
+}
+
+struct RemotePluginPromptResponse: Decodable {
+    let prompt: RemotePluginPrompt?
+    let inputs: [String: String]
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case prompt, inputs, error
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        prompt = try c.decodeIfPresent(RemotePluginPrompt.self, forKey: .prompt)
+        inputs = try c.decodeIfPresent([String: String].self, forKey: .inputs) ?? [:]
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
+struct RemoteSignInState: Decodable, Equatable {
+    let id: String
+    let agent: String
+    let url: String
+    let code: String?
+    let state: String
+    let pasteCallback: Bool
+    let pasteCode: Bool
+    let pasteKey: Bool
+    let keysURL: String?
+    let instructions: String?
+    let opened: Bool
+    let installing: String?
+    let user: String?
+    let plan: String?
+    let using: Bool
+    let again: Bool
+    let error: String?
+    let callbackBlocked: String?
+    let callbackPort: Int?
+    let proxy: String?
+    let linkOnly: Bool
+    let openError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, agent, url, code, state, pasteCallback, pasteCode, pasteKey
+        case keysURL, instructions, opened, installing, user, plan, using, again
+        case error, callbackBlocked, callbackPort, proxy, linkOnly, openError
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
+        agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? ""
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        code = try c.decodeIfPresent(String.self, forKey: .code)
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? "waiting"
+        pasteCallback = try c.decodeIfPresent(Bool.self, forKey: .pasteCallback) ?? false
+        pasteCode = try c.decodeIfPresent(Bool.self, forKey: .pasteCode) ?? false
+        pasteKey = try c.decodeIfPresent(Bool.self, forKey: .pasteKey) ?? false
+        keysURL = try c.decodeIfPresent(String.self, forKey: .keysURL)
+        instructions = try c.decodeIfPresent(String.self, forKey: .instructions)
+        opened = try c.decodeIfPresent(Bool.self, forKey: .opened) ?? false
+        installing = try c.decodeIfPresent(String.self, forKey: .installing)
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        using = try c.decodeIfPresent(Bool.self, forKey: .using) ?? false
+        again = try c.decodeIfPresent(Bool.self, forKey: .again) ?? false
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        callbackBlocked = try c.decodeIfPresent(String.self, forKey: .callbackBlocked)
+        callbackPort = try c.decodeIfPresent(Int.self, forKey: .callbackPort)
+        proxy = try c.decodeIfPresent(String.self, forKey: .proxy)
+        linkOnly = try c.decodeIfPresent(Bool.self, forKey: .linkOnly) ?? false
+        openError = try c.decodeIfPresent(String.self, forKey: .openError)
+    }
+}
+
+struct RemoteImportedAccount: Decodable, Identifiable, Equatable {
+    var id: String { "\(user)|\(status)|\(file ?? 0)|\(error ?? "")" }
+    let user: String
+    let status: String
+    let plan: String?
+    let error: String?
+    let file: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case user, status, plan, error, file
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        user = try c.decodeIfPresent(String.self, forKey: .user) ?? ""
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "failed"
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        file = try c.decodeIfPresent(Int.self, forKey: .file)
+    }
+}
+
+struct RemoteSignInImportResponse: Decodable {
+    let results: [RemoteImportedAccount]
+    let providers: RemoteProvidersResponse
+}
+
+struct RemoteSignInExportResponse: Decodable {
+    let path: String
+    let accounts: [String]
+    let skipped: [RemoteImportedAccount]
+
+    enum CodingKeys: String, CodingKey {
+        case path, accounts, skipped
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decodeIfPresent(String.self, forKey: .path) ?? ""
+        accounts = try c.decodeIfPresent([String].self, forKey: .accounts) ?? []
+        skipped = try c.decodeIfPresent([RemoteImportedAccount].self, forKey: .skipped) ?? []
+    }
+}
+
+struct RemoteClaudeTokenResponse: Decodable {
+    let user: String
+}
+
+struct RemoteMoveCandidate: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let package: String
+    let accounts: Int
+    let error: String?
+}
+
+struct RemoteWithdrawnPlugin: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let instead: String
+    let package: String
+}
+
+struct RemoteProviderMove: Decodable, Equatable {
+    let package: String
+    let state: String
+    let error: String?
+}
+
+struct RemoteExcludedAccount: Decodable, Identifiable, Equatable {
+    var id: String { "\(agent)|\(provider ?? "")|\(why)" }
+    let agent: String
+    let provider: String?
+    let name: String?
+    let agentName: String
+    let agentIcon: String
+    let why: String
+    let signedOut: Bool
+    let users: [String]
+    let quiet: Bool
+    let retry: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case agent, provider, name, agentName, agentIcon, why, signedOut, users, quiet, retry
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? ""
+        provider = try c.decodeIfPresent(String.self, forKey: .provider)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        agentName = try c.decodeIfPresent(String.self, forKey: .agentName) ?? agent
+        agentIcon = try c.decodeIfPresent(String.self, forKey: .agentIcon) ?? "generic"
+        why = try c.decodeIfPresent(String.self, forKey: .why) ?? ""
+        signedOut = try c.decodeIfPresent(Bool.self, forKey: .signedOut) ?? false
+        users = try c.decodeIfPresent([String].self, forKey: .users) ?? []
+        quiet = try c.decodeIfPresent(Bool.self, forKey: .quiet) ?? false
+        retry = try c.decodeIfPresent(Bool.self, forKey: .retry) ?? false
+    }
+}
+
+struct RemoteQuotaWindow: Decodable, Identifiable, Equatable {
+    var id: String { "\(name)|\(capId ?? "")|\(pool ?? "")|\(family ?? "")" }
+    let unlimited: Bool
+    let name: String
+    let used: Double
+    let resetsAt: String?
+    let resetSecs: Int64?
+    let display: String?
+    let text: Bool
+    let lane: String?
+    let amount: Double?
+    let limit: Double?
+    let unit: String?
+    let balance: Double?
+    let spent: Double?
+    let family: String?
+    let pool: String?
+    let credits: Bool
+    let extra: Bool
+    let capped: Bool
+    let capsSome: Bool
+    let capId: String?
+    let ownCap: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case unlimited, name, used, resetsAt, resetSecs, display, text, lane
+        case amount, limit, unit, balance, spent, family, pool, credits, extra
+        case capped, capsSome, capId, ownCap
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        unlimited = try c.decodeIfPresent(Bool.self, forKey: .unlimited) ?? false
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        used = try c.decodeIfPresent(Double.self, forKey: .used) ?? 0
+        resetsAt = try c.decodeIfPresent(String.self, forKey: .resetsAt)
+        resetSecs = try c.decodeIfPresent(Int64.self, forKey: .resetSecs)
+        display = try c.decodeIfPresent(String.self, forKey: .display)
+        text = try c.decodeIfPresent(Bool.self, forKey: .text) ?? false
+        lane = try c.decodeIfPresent(String.self, forKey: .lane)
+        amount = try c.decodeIfPresent(Double.self, forKey: .amount)
+        limit = try c.decodeIfPresent(Double.self, forKey: .limit)
+        unit = try c.decodeIfPresent(String.self, forKey: .unit)
+        balance = try c.decodeIfPresent(Double.self, forKey: .balance)
+        spent = try c.decodeIfPresent(Double.self, forKey: .spent)
+        family = try c.decodeIfPresent(String.self, forKey: .family)
+        pool = try c.decodeIfPresent(String.self, forKey: .pool)
+        credits = try c.decodeIfPresent(Bool.self, forKey: .credits) ?? false
+        extra = try c.decodeIfPresent(Bool.self, forKey: .extra) ?? false
+        capped = try c.decodeIfPresent(Bool.self, forKey: .capped) ?? false
+        capsSome = try c.decodeIfPresent(Bool.self, forKey: .capsSome) ?? false
+        capId = try c.decodeIfPresent(String.self, forKey: .capId)
+        ownCap = try c.decodeIfPresent(Bool.self, forKey: .ownCap) ?? false
+    }
+}
+
+struct RemoteLoginQuota: Decodable, Equatable {
+    let provider: String
+    let name: String
+    let icon: String
+    let plan: String?
+    let accessSku: String?
+    let user: String?
+    let windows: [RemoteQuotaWindow]
+    let balance: String?
+    let until: String?
+    let renew: String?
+    let error: String?
+    let pluginError: Bool
+    let asOf: String?
+    let readAt: String?
+    let readDeferred: Bool
+    let held: Bool
+    let checkins: Bool
+    let checkinBy: String?
+    let checkinKey: String?
+    let checkinOff: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case provider, name, icon, plan, accessSku, user, windows, balance
+        case until, renew, error, pluginError, asOf, readAt, readDeferred, held
+        case checkins, checkinBy, checkinKey, checkinOff
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        provider = try c.decodeIfPresent(String.self, forKey: .provider) ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? ""
+        plan = try c.decodeIfPresent(String.self, forKey: .plan)
+        accessSku = try c.decodeIfPresent(String.self, forKey: .accessSku)
+        user = try c.decodeIfPresent(String.self, forKey: .user)
+        windows = try c.decodeIfPresent([RemoteQuotaWindow].self, forKey: .windows) ?? []
+        balance = try c.decodeIfPresent(String.self, forKey: .balance)
+        until = try c.decodeIfPresent(String.self, forKey: .until)
+        renew = try c.decodeIfPresent(String.self, forKey: .renew)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        pluginError = try c.decodeIfPresent(Bool.self, forKey: .pluginError) ?? false
+        asOf = try c.decodeIfPresent(String.self, forKey: .asOf)
+        readAt = try c.decodeIfPresent(String.self, forKey: .readAt)
+        readDeferred = try c.decodeIfPresent(Bool.self, forKey: .readDeferred) ?? false
+        held = try c.decodeIfPresent(Bool.self, forKey: .held) ?? false
+        checkins = try c.decodeIfPresent(Bool.self, forKey: .checkins) ?? false
+        checkinBy = try c.decodeIfPresent(String.self, forKey: .checkinBy)
+        checkinKey = try c.decodeIfPresent(String.self, forKey: .checkinKey)
+        checkinOff = try c.decodeIfPresent(Bool.self, forKey: .checkinOff) ?? false
+    }
 }
 
 struct RemoteProviderModel: Decodable, Identifiable, Equatable {

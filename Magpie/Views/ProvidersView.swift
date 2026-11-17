@@ -5,6 +5,8 @@ struct ProvidersView: View {
     @State private var sectionTab: ProviderSectionTab = .providers
     @State private var searchText = ""
     @State private var presentingAddSheet = false
+    @State private var addSheetInitialMode: AddProviderSheet.CreationMode = .subscription
+    @State private var signingPlatform: SubscriptionPlatform?
     @State private var presentingPriceSheet = false
     @State private var presentingGroupExtras = false
     @State private var testingProviderID: String?
@@ -45,14 +47,22 @@ struct ProvidersView: View {
                     }
                     Spacer()
                     if sectionTab == .providers {
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             Button("定价") {
                                 presentingPriceSheet = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                            .disabled(store.activeServer == nil)
+
+                            Button("OAuth 授权") {
+                                addSheetInitialMode = .subscription
+                                presentingAddSheet = true
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                             .disabled(store.activeServer == nil)
 
                             Button("新增") {
+                                addSheetInitialMode = .custom
                                 presentingAddSheet = true
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
@@ -81,6 +91,7 @@ struct ProvidersView: View {
                     }
                 } else if sectionTab == .providers {
                     searchField
+                    subscriptionNoticeCards
                     if filteredProviders.isEmpty {
                         MinimalSection {
                             Text(store.providers.isEmpty ? "服务端暂无已配置的供应商" : "没有匹配的供应商或模型")
@@ -122,7 +133,14 @@ struct ProvidersView: View {
             await store.refreshGroups()
         }
         .sheet(isPresented: $presentingAddSheet) {
-            AddProviderSheet(store: store)
+            AddProviderSheet(store: store, initialMode: addSheetInitialMode) { platform in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    signingPlatform = platform
+                }
+            }
+        }
+        .sheet(item: $signingPlatform) { platform in
+            SubscriptionSignInSheet(store: store, platform: platform)
         }
         .sheet(isPresented: $presentingPriceSheet) {
             ModelPriceEditorView(store: store)
@@ -218,6 +236,40 @@ struct ProvidersView: View {
         )
     }
 
+    @ViewBuilder
+    private var subscriptionNoticeCards: some View {
+        if !store.agyMoveUsers.isEmpty {
+            MinimalSection(title: "Antigravity 迁移提示", trailingText: "安全迁移") {
+                Text("Google 会封禁在官方 Antigravity 客户端之外使用的账号。可将已保存账号一键迁至 local agy CLI：\(store.agyMoveUsers.joined(separator: ", "))")
+                    .font(.system(size: 12.5))
+                    .foregroundColor(MagpieTheme.warn)
+                Button("一键迁移至 local agy CLI") {
+                    Task { _ = await store.moveAntigravityToAgy() }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+            }
+        }
+        ForEach(store.excludedAccounts.filter { !$0.quiet }) { ex in
+            MinimalSection(title: "\(ex.agentName) 账号状态异常") {
+                Text(ex.why)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                if let pid = ex.provider, !pid.isEmpty {
+                    HStack(spacing: 8) {
+                        Button("重新恢复") {
+                            Task { _ = await store.restoreExcludedProvider(id: pid, name: ex.agentName) }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        Button("彻底登出") {
+                            Task { _ = await store.forgetExcludedProvider(id: pid, name: ex.agentName) }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
+                    }
+                }
+            }
+        }
+    }
+
     private func providerCard(_ provider: RemoteProvider) -> some View {
         let isEnabled = !provider.off
         let statusKind: ConnectionStatusKind = provider.off ? .untested : (provider.ready ? .connected : .failed)
@@ -269,8 +321,17 @@ struct ProvidersView: View {
                     MagpieTag(text: "\(onKeys)/\(provider.keyList.count) Key")
                 } else if let masked = provider.key?.masked, !masked.isEmpty {
                     MagpieTag(text: masked, monospaced: true)
-                } else if let user = provider.account?.user, !user.isEmpty {
-                    MagpieTag(text: user)
+                } else if let acc = provider.account {
+                    if !acc.logins.isEmpty {
+                        let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
+                        MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.info)
+                    }
+                    if let user = acc.user, !user.isEmpty {
+                        MagpieTag(text: user)
+                    }
+                    if let plan = acc.plan, !plan.isEmpty {
+                        MagpieTag(text: plan, tone: MagpieTheme.ok)
+                    }
                 }
             }
 
@@ -295,6 +356,16 @@ struct ProvidersView: View {
             HStack(spacing: 8) {
                 Button("管理") { selectedProvider = provider }
                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                if let agent = provider.account?.agent, !agent.isEmpty {
+                    Button("授权") {
+                        signingPlatform = SubscriptionCatalog.resolve(
+                            agent: agent,
+                            plugins: store.pluginSubs,
+                            onPlugins: store.onPlugins
+                        )
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                }
                 Button(testingProviderID == provider.id ? "测连中…" : "测连") {
                     testingProviderID = provider.id
                     Task {
@@ -535,14 +606,18 @@ private struct GroupExtrasSheet: View {
 
 private struct AddProviderSheet: View {
     @ObservedObject var store: GatewayStore
+    var initialMode: CreationMode = .subscription
+    var onSelectSubscription: (SubscriptionPlatform) -> Void
     @Environment(\.dismiss) private var dismiss
 
     enum CreationMode: String, CaseIterable {
-        case custom = "自定义协议地址"
-        case preset = "从官方预设选择"
+        case subscription = "订阅 OAuth"
+        case preset = "API Key 预设"
+        case custom = "自定义地址"
     }
 
-    @State private var mode: CreationMode = .custom
+    @State private var mode: CreationMode = .subscription
+    @State private var subQuery = ""
     @State private var selectedPresetID: String = ""
     @State private var name = ""
     @State private var apiKey = ""
@@ -552,6 +627,24 @@ private struct AddProviderSheet: View {
     @State private var geminiURL = ""
     @State private var isSaving = false
     @State private var errorMsg: String?
+
+    private var catalog: (builtins: [SubscriptionPlatform], extraPlugins: [SubscriptionPlatform]) {
+        SubscriptionCatalog.allPlatforms(plugins: store.pluginSubs, onPlugins: store.onPlugins)
+    }
+
+    private func matches(_ p: SubscriptionPlatform) -> Bool {
+        let q = subQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return true }
+        return p.name.lowercased().contains(q)
+            || p.agent.lowercased().contains(q)
+            || p.subtitle.lowercased().contains(q)
+            || p.keywords.lowercased().contains(q)
+    }
+
+    private func loginCount(for agent: String) -> Int {
+        guard let p = store.providers.first(where: { $0.account?.agent == agent }) else { return 0 }
+        return max(p.account?.logins.count ?? 0, (p.account?.user?.isEmpty == false) ? 1 : 0)
+    }
 
     var body: some View {
         ZStack {
@@ -566,10 +659,16 @@ private struct AddProviderSheet: View {
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundColor(MagpieTheme.ink)
                     Spacer()
-                    Button(isSaving ? "保存中…" : "保存") { commit() }
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(MagpieTheme.ink)
-                        .disabled(isSaving)
+                    if mode == .subscription {
+                        Text("选择平台")
+                            .font(.system(size: 13))
+                            .foregroundColor(MagpieTheme.textMuted)
+                    } else {
+                        Button(isSaving ? "保存中…" : "保存") { commit() }
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(MagpieTheme.ink)
+                            .disabled(isSaving)
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 16)
@@ -578,51 +677,59 @@ private struct AddProviderSheet: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 18) {
-                        if !store.presets.isEmpty {
-                            Picker("添加方式", selection: $mode) {
-                                ForEach(CreationMode.allCases, id: \.self) { m in
-                                    Text(m.rawValue).tag(m)
-                                }
+                        Picker("添加方式", selection: $mode) {
+                            ForEach(CreationMode.allCases, id: \.self) { m in
+                                Text(m.rawValue).tag(m)
                             }
-                            .pickerStyle(.segmented)
                         }
+                        .pickerStyle(.segmented)
 
-                        if mode == .preset, !store.presets.isEmpty {
-                            MinimalSection(title: "选择厂商预设", trailingText: "\(store.presets.count) 个预设") {
-                                ForEach(store.presets.prefix(25)) { preset in
-                                    Button {
-                                        selectedPresetID = preset.id
-                                        name = preset.displayTitle
-                                        chatURL = preset.chat ?? ""
-                                        anthropicURL = preset.anthropic ?? ""
-                                        responsesURL = preset.responses ?? ""
-                                    } label: {
-                                        HStack {
-                                            Text(preset.displayTitle)
-                                                .font(.system(size: 13.5, weight: .medium))
-                                                .foregroundColor(MagpieTheme.ink)
-                                            Spacer()
-                                            if selectedPresetID == preset.id {
-                                                MagpieTag(text: "已选", tone: MagpieTheme.ok)
+                        if mode == .subscription {
+                            subscriptionListContent
+                        } else {
+                            if mode == .preset, !store.presets.isEmpty {
+                                MinimalSection(title: "选择厂商预设", trailingText: "\(store.presets.count) 个预设") {
+                                    ForEach(store.presets.prefix(30)) { preset in
+                                        Button {
+                                            selectedPresetID = preset.id
+                                            name = preset.displayTitle
+                                            chatURL = preset.chat ?? ""
+                                            anthropicURL = preset.anthropic ?? ""
+                                            responsesURL = preset.responses ?? ""
+                                        } label: {
+                                            HStack {
+                                                Text(preset.displayTitle)
+                                                    .font(.system(size: 13.5, weight: .medium))
+                                                    .foregroundColor(MagpieTheme.ink)
+                                                Spacer()
+                                                if selectedPresetID == preset.id {
+                                                    MagpieTag(text: "已选", tone: MagpieTheme.ok)
+                                                }
                                             }
                                         }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
+                                }
+                            } else if mode == .preset && store.presets.isEmpty {
+                                MinimalSection(title: "提示") {
+                                    Text("服务端未返回内置 API Key 预设，可切换为「自定义地址」或「订阅 OAuth」。")
+                                        .font(.system(size: 12.5))
+                                        .foregroundColor(MagpieTheme.textSecondary)
                                 }
                             }
-                        }
 
-                        MinimalSection(title: "供应商参数", trailingText: "/api/provider/save") {
-                            MagpieInputField(label: "名称", placeholder: "例如：OpenRouter / 自建中转", text: $name)
-                            MagpieInputField(label: "API Key", placeholder: "sk-...", text: $apiKey, isSecure: true, monospaced: true)
-                            MagpieInputField(label: "OpenAI Chat Base URL", placeholder: "https://api.openai.com/v1", text: $chatURL, monospaced: true, keyboardType: .URL)
-                            MagpieInputField(label: "Anthropic Base URL（可选）", placeholder: "https://api.anthropic.com", text: $anthropicURL, monospaced: true, keyboardType: .URL)
-                            MagpieInputField(label: "Responses Base URL（可选）", placeholder: "https://api.openai.com/v1", text: $responsesURL, monospaced: true, keyboardType: .URL)
-                            MagpieInputField(label: "Gemini Base URL（可选）", placeholder: "https://generativelanguage.googleapis.com/v1beta", text: $geminiURL, monospaced: true, keyboardType: .URL)
-                        }
+                            MinimalSection(title: "供应商参数", trailingText: "/api/provider/save") {
+                                MagpieInputField(label: "名称", placeholder: "例如：OpenRouter / 自建中转", text: $name)
+                                MagpieInputField(label: "API Key", placeholder: "sk-...", text: $apiKey, isSecure: true, monospaced: true)
+                                MagpieInputField(label: "OpenAI Chat Base URL", placeholder: "https://api.openai.com/v1", text: $chatURL, monospaced: true, keyboardType: .URL)
+                                MagpieInputField(label: "Anthropic Base URL（可选）", placeholder: "https://api.anthropic.com", text: $anthropicURL, monospaced: true, keyboardType: .URL)
+                                MagpieInputField(label: "Responses Base URL（可选）", placeholder: "https://api.openai.com/v1", text: $responsesURL, monospaced: true, keyboardType: .URL)
+                                MagpieInputField(label: "Gemini Base URL（可选）", placeholder: "https://generativelanguage.googleapis.com/v1beta", text: $geminiURL, monospaced: true, keyboardType: .URL)
+                            }
 
-                        if let err = errorMsg {
-                            MagpieErrorBanner(title: "保存失败", message: err)
+                            if let err = errorMsg {
+                                MagpieErrorBanner(title: "保存失败", message: err)
+                            }
                         }
                     }
                     .padding(22)
@@ -630,6 +737,109 @@ private struct AddProviderSheet: View {
             }
         }
         .preferredColorScheme(.light)
+        .onAppear {
+            mode = initialMode
+        }
+    }
+
+    @ViewBuilder
+    private var subscriptionListContent: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundColor(MagpieTheme.textMuted)
+            TextField("搜索平台：反重力 / Codex / Claude / Gemini / Copilot…", text: $subQuery)
+                .font(.system(size: 13))
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(MagpieTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
+
+        let filteredBuiltins = catalog.builtins.filter(matches)
+        let filteredExtras = catalog.extraPlugins.filter(matches)
+
+        MinimalSection(title: "官方与内置反代订阅平台", trailingText: "\(filteredBuiltins.count) 个平台") {
+            ForEach(filteredBuiltins) { platform in
+                subscriptionPlatformRow(platform)
+            }
+        }
+
+        if !filteredExtras.isEmpty {
+            MinimalSection(title: "已安装的插件反代平台", trailingText: "\(filteredExtras.count) 个插件") {
+                ForEach(filteredExtras) { platform in
+                    subscriptionPlatformRow(platform)
+                }
+            }
+        }
+
+        let quietRemoved = store.excludedAccounts.filter { $0.quiet && ($0.provider?.isEmpty == false) }
+        if !quietRemoved.isEmpty {
+            MinimalSection(title: "已移除仍保持登录的账号") {
+                ForEach(quietRemoved) { ex in
+                    HStack {
+                        Text(ex.agentName)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundColor(MagpieTheme.ink)
+                        Spacer()
+                        if let pid = ex.provider {
+                            Button("加回") {
+                                Task { _ = await store.restoreExcludedProvider(id: pid, name: ex.agentName) }
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                            Button("登出") {
+                                Task { _ = await store.forgetExcludedProvider(id: pid, name: ex.agentName) }
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func subscriptionPlatformRow(_ platform: SubscriptionPlatform) -> some View {
+        let count = loginCount(for: platform.agent)
+        return Button {
+            dismiss()
+            onSelectSubscription(platform)
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(platform.name)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(MagpieTheme.ink)
+                        if count > 0 {
+                            MagpieTag(text: "\(count) 账号", tone: MagpieTheme.ok)
+                        }
+                        if platform.isPluginBacked {
+                            MagpieTag(text: "插件", tone: MagpieTheme.info)
+                        }
+                        if platform.risk {
+                            MagpieTag(text: "风控", tone: MagpieTheme.warn)
+                        }
+                    }
+                    Text(platform.subtitle)
+                        .font(.system(size: 12))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                        .lineLimit(1)
+                    Text(platform.plans)
+                        .font(.system(size: 11))
+                        .foregroundColor(MagpieTheme.textMuted)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(MagpieTheme.textMuted)
+            }
+            .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
     }
 
     private func commit() {
