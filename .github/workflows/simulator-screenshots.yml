@@ -39,57 +39,7 @@ jobs:
             HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
           fi
           mkdir -p MagpieUITests
-          cat << 'EOF' > MagpieUITests/MagpieScreenshotTests.swift
-          import XCTest
-
-          final class MagpieScreenshotTests: XCTestCase {
-              private func saveShot(_ name: String) {
-                  let shot = XCUIScreen.main.screenshot()
-                  let att = XCTAttachment(screenshot: shot)
-                  att.name = name
-                  att.lifetime = .keepAlways
-                  add(att)
-              }
-
-              private func tapButton(matching suffix: String, in app: XCUIApplication, timeout: TimeInterval = 6) {
-                  let pred = NSPredicate(format: "label ENDSWITH %@", suffix)
-                  let btn = app.buttons.matching(pred).firstMatch
-                  if btn.waitForExistence(timeout: timeout) {
-                      btn.tap()
-                  } else {
-                      let containsPred = NSPredicate(format: "label CONTAINS %@", suffix)
-                      let fallback = app.buttons.matching(containsPred).firstMatch
-                      XCTAssertTrue(fallback.waitForExistence(timeout: timeout), "Button '\(suffix)' not found")
-                      fallback.tap()
-                  }
-              }
-
-              func testCaptureAllTabs() {
-                  let app = XCUIApplication()
-                  app.launch()
-                  sleep(2)
-                  saveShot("01-dashboard")
-
-                  tapButton(matching: "连接 magpie web", in: app)
-                  sleep(1)
-                  saveShot("02-server-editor")
-                  tapButton(matching: "取消", in: app)
-                  sleep(1)
-
-                  tapButton(matching: "供应商", in: app)
-                  sleep(1)
-                  saveShot("03-providers")
-
-                  tapButton(matching: "用量", in: app)
-                  sleep(1)
-                  saveShot("04-usage")
-
-                  tapButton(matching: "隐私与设置", in: app)
-                  sleep(1)
-                  saveShot("05-privacy-settings")
-              }
-          }
-          EOF
+          cp Tests/MagpieScreenshotTests.swift MagpieUITests/MagpieScreenshotTests.swift
 
           python3 -c '
           with open("project.yml", "r") as f:
@@ -122,6 +72,12 @@ jobs:
           '
           xcodegen generate --spec project.yml
 
+      - name: Start local API fixture (demonstration data only)
+        run: |
+          mkdir -p build
+          nohup python3 Tests/mock_server.py > build/mock-server.log 2>&1 < /dev/null &
+          python3 Tests/fixture_smoke.py
+
       - name: Run UI tests in iOS Simulator to capture screenshots
         run: |
           set -o pipefail
@@ -153,4 +109,6 @@ jobs:
           path: |
             build/screenshots
             build/xcodebuild-test.log
+            build/ui-api-requests.jsonl
+            build/mock-server.log
           retention-days: 7

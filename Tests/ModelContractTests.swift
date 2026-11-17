@@ -22,7 +22,7 @@ struct ModelContractTests {
         precondition(!sameConsoleOrigin(URL(string: "https://example.com:8443/")!, base))
         precondition(!sameConsoleOrigin(URL(string: "https://evil.example/path")!, base))
         let console = ConsoleDestination.backup.url(base: base)!
-        precondition(console.path == "/magpie/" && console.query!.contains("tab=sync"))
+        precondition(URLComponents(url: console, resolvingAgainstBaseURL: false)?.path == "/magpie/" && console.query!.contains("tab=sync"))
         precondition(!console.query!.contains("k="))
         let payload = preservedProviderPayload(current: ["headers": ["X-Custom": "test"], "contexts": ["m": 200000], "chosen": ["m"], "key": ["masked": "hidden"], "models": [["id": "m"]]], changes: ["name": "Renamed"])
         precondition((payload["headers"] as? [String: String])?["X-Custom"] == "test")
