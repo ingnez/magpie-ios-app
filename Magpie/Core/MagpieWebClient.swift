@@ -110,6 +110,13 @@ actor MagpieWebClient {
         return session.configuration.httpCookieStorage?.cookies(for: url)?.count ?? 0
     }
 
+    func consoleSession() async throws -> (base: URL, cookies: [HTTPCookie], insecureTLS: Bool) {
+        try await ensureAuthenticated(forceRefresh: true)
+        guard let profile = server, let base = URL(string: profile.baseURL) else { throw MagpieWebError.notConfigured }
+        let cookies = session.configuration.httpCookieStorage?.cookies(for: base) ?? []
+        return (base, cookies.filter { $0.name.hasPrefix("magpie_web_") }, profile.allowInsecureTLS)
+    }
+
     // MARK: - Auth & Cookie Exchange
 
     /// Exchanges `k` for the `magpie_web_<port>` cookie via `GET /api/state?k=<key>`
@@ -215,7 +222,7 @@ actor MagpieWebClient {
 
     // MARK: - Core HTTP Pipeline with 401 Auto-Renewal
 
-    private func requestData(
+    func requestData(
         method: String = "GET",
         path: String,
         queryItems: [URLQueryItem] = [],
@@ -551,12 +558,9 @@ actor MagpieWebClient {
     /// Reads current `/api/settings` (when uncached), merges only changed fields so
     /// desktop/unrelated preferences are preserved (`prefsKeep`), and posts to `POST /api/settings`.
     func patchSettings(_ patch: [String: Any]) async throws -> RemoteSettingsState {
-        var base: [String: Any]
-        if let cached = lastRawSettings {
-            base = cached
-        } else {
-            let (rawData, _) = try await requestData(path: "/api/settings")
-            base = (try? JSONSerialization.jsonObject(with: rawData)) as? [String: Any] ?? [:]
+        let (rawData, _) = try await requestData(path: "/api/settings")
+        guard var base = try JSONSerialization.jsonObject(with: rawData) as? [String: Any] else {
+            throw MagpieWebError.decodingError("无法读取现有设置，已取消保存")
         }
         for (k, v) in patch {
             base[k] = v

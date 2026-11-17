@@ -5,11 +5,20 @@ extension MagpieWebClient {
     // MARK: - Provider Detail, Models & Policies (`/api/provider/*`, `/api/providers/*`)
 
     func saveProviderPayload(_ payload: [String: Any]) async throws -> RemoteProvidersResponse {
+        var body = payload
+        if payload["new"] as? Bool != true, let id = (payload["from"] ?? payload["id"]) as? String {
+            let (data, _) = try await requestData(path: "/api/providers")
+            let response = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            guard let current = (response?["providers"] as? [[String: Any]])?.first(where: { $0["id"] as? String == id }) else {
+                throw MagpieWebError.decodingError("供应商已改变，请刷新后重新编辑")
+            }
+            body = preservedProviderPayload(current: current, changes: payload)
+        }
         return try await requestJSON(
             RemoteProvidersResponse.self,
             method: "POST",
             path: "/api/provider/save",
-            jsonBody: payload,
+            jsonBody: body,
             timeout: 35
         ).value
     }

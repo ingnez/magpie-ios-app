@@ -9,5 +9,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Compile and run backend model contract tests
         run: |
-          swiftc Magpie/Core/MagpieWebModels.swift Magpie/Core/MagpieOperationModels.swift Tests/ModelContractTests.swift -o /tmp/magpie-contracts
+          swiftc Magpie/Core/MagpieWebModels.swift Magpie/Core/MagpieOperationModels.swift Magpie/Core/ConsoleDestination.swift Magpie/Core/ProviderEditPayload.swift Tests/ModelContractTests.swift -o /tmp/magpie-contracts
           /tmp/magpie-contracts

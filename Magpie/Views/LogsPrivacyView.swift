@@ -4,6 +4,7 @@ struct LogsPrivacyView: View {
     @ObservedObject var store: GatewayStore
     @Binding var presentingNewServer: Bool
 
+    @State private var consoleDestination: ConsoleDestination?
     @State private var showingCallerKeys = false
     @State private var showingRules = false
     @State private var selectedRecord: RemoteMaskingRecord?
@@ -39,12 +40,20 @@ struct LogsPrivacyView: View {
                     maskingPreviewSection
                     maskingRecordsSection
                     networkAndBarkSection
+                    MinimalSection(title: "完整管理控制台") {
+                        Text("在 App 内打开服务器原版页面").font(.caption).foregroundColor(MagpieTheme.textSecondary)
+                        ForEach(ConsoleDestination.allCases) { destination in
+                            Button(destination.title) { consoleDestination = destination }
+                                .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 22)
             .padding(.top, 24)
             .padding(.bottom, 100)
         }
+        .sheet(item: $consoleDestination) { destination in RemoteConsoleView(store: store, destination: destination) }
         .sheet(isPresented: $showingCallerKeys) { CallerKeysView(store: store) }
         .sheet(isPresented: $showingRules) { MaskingRulesEditor(store: store) }
         .sheet(item: $selectedRecord) { record in MaskingRecordDetail(store: store, record: record) }
