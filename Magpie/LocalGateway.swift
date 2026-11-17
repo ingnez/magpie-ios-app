@@ -1,18 +1,15 @@
 import Foundation
 import Darwin
 
-enum MagpieProtocol: String {
-    case openAIChat = "openai-chat"
-    case openAIResponses = "openai-responses"
-    case anthropicMessages = "anthropic-messages"
-    case geminiV1Beta = "gemini-v1beta"
+extension Notification.Name {
+    static let magpieGatewayDidUpdate = Notification.Name("ai.usemagpie.ios.gatewayDidUpdate")
 }
 
-struct MagpieUpstreamConfig: Codable {
-    var baseURL: String
-    var apiKey: String
-    var targetProtocol: String
-    var defaultModel: String
+private struct UpstreamForwardResult {
+    let statusCode: Int
+    let json: [String: Any]?
+    let errorMessage: String?
+    let latencyMs: Int
 }
 
 final class MagpieLocalGateway {
@@ -20,8 +17,25 @@ final class MagpieLocalGateway {
 
     private let lock = NSLock()
     private var isRunning = false
+    private var bindFailedReason: String?
     private var requestCount = 0
+    private var successCount = 0
+    private var errorCount = 0
+    private var maskedItemsCount = 0
     private var upstreamConfig: MagpieUpstreamConfig?
+    private var privacySettings = PrivacyMaskSettings()
+    private var logs: [GatewayLogEntry] = []
+    private let maxLogEntries = 200
+
+    static let fallbackModels: [[String: Any]] = [
+        ["id": "claude-sonnet-4-5", "object": "model", "owned_by": "magpie-anthropic"],
+        ["id": "claude-opus-4-5", "object": "model", "owned_by": "magpie-anthropic"],
+        ["id": "gemini-2.5-pro", "object": "model", "owned_by": "magpie-gemini"],
+        ["id": "gemini-2.5-flash", "object": "model", "owned_by": "magpie-gemini"],
+        ["id": "deepseek-r1", "object": "model", "owned_by": "magpie-deepseek"],
+        ["id": "gpt-4o", "object": "model", "owned_by": "magpie-openai"],
+        ["id": "gpt-4.1", "object": "model", "owned_by": "magpie-openai"]
+    ]
 
     private init() {}
 
@@ -39,10 +53,89 @@ final class MagpieLocalGateway {
         }
     }
 
+    func applyUpstreamConfig(_ cfg: MagpieUpstreamConfig?) {
+        lock.lock()
+        if var normalized = cfg {
+            while normalized.baseURL.hasSuffix("/") {
+                normalized.baseURL.removeLast()
+            }
+            upstreamConfig = normalized
+        } else {
+            upstreamConfig = nil
+        }
+        lock.unlock()
+        notifyObservers()
+    }
+
+    func updatePrivacySettings(_ settings: PrivacyMaskSettings) {
+        lock.lock()
+        privacySettings = settings
+        lock.unlock()
+        notifyObservers()
+    }
+
+    func currentSnapshot() -> GatewayStatusSnapshot {
+        lock.lock()
+        let snap = GatewayStatusSnapshot(
+            daemonOnline: isRunning && bindFailedReason == nil,
+            requestsHandled: requestCount,
+            successCount: successCount,
+            errorCount: errorCount,
+            maskedItemsCount: maskedItemsCount,
+            listenAddress: "http://127.0.0.1:3425",
+            lastError: bindFailedReason
+        )
+        lock.unlock()
+        return snap
+    }
+
+    func recentLogs() -> [GatewayLogEntry] {
+        lock.lock()
+        let copy = logs
+        lock.unlock()
+        return copy
+    }
+
+    func clearLogs() {
+        lock.lock()
+        logs.removeAll()
+        lock.unlock()
+        notifyObservers()
+    }
+
+    private func notifyObservers() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .magpieGatewayDidUpdate, object: nil)
+        }
+    }
+
+    private func appendLog(_ entry: GatewayLogEntry, isSuccess: Bool) {
+        lock.lock()
+        if isSuccess {
+            successCount += 1
+        } else {
+            errorCount += 1
+        }
+        maskedItemsCount += entry.maskedCount
+        logs.insert(entry, at: 0)
+        if logs.count > maxLogEntries {
+            logs.removeLast(logs.count - maxLogEntries)
+        }
+        lock.unlock()
+        notifyObservers()
+    }
+
     private func runServerLoop() {
         signal(SIGPIPE, SIG_IGN)
         let srv = socket(AF_INET, SOCK_STREAM, 0)
-        guard srv >= 0 else { return }
+        guard srv >= 0 else {
+            lock.lock()
+            bindFailedReason = "无法创建本地监听 Socket（errno=\(errno)）"
+            isRunning = false
+            lock.unlock()
+            notifyObservers()
+            return
+        }
 
         var yes: Int32 = 1
         setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
@@ -60,9 +153,17 @@ final class MagpieLocalGateway {
             }
         }
         guard bindRes == 0, listen(srv, 64) == 0 else {
+            let err = errno
             close(srv)
+            lock.lock()
+            bindFailedReason = "本地端口 127.0.0.1:3425 绑定失败（errno=\(err)）"
+            isRunning = false
+            lock.unlock()
+            notifyObservers()
             return
         }
+
+        notifyObservers()
 
         while true {
             let client = accept(srv, nil, nil)
@@ -76,6 +177,7 @@ final class MagpieLocalGateway {
     }
 
     private func handleConnection(client: Int32) {
+        let startTime = CFAbsoluteTimeGetCurrent()
         guard let rawRequest = readHTTPRequest(client: client) else { return }
 
         if rawRequest.method == "OPTIONS" {
@@ -86,7 +188,11 @@ final class MagpieLocalGateway {
         lock.lock()
         requestCount += 1
         let count = requestCount
+        let sCount = successCount
+        let eCount = errorCount
+        let mCount = maskedItemsCount
         let savedUpstream = upstreamConfig
+        let currentPrivacy = privacySettings
         lock.unlock()
 
         let path = rawRequest.path.components(separatedBy: "?").first ?? rawRequest.path
@@ -95,10 +201,16 @@ final class MagpieLocalGateway {
             let statusPayload: [String: Any] = [
                 "status": "ok",
                 "app": "Magpie iOS Reverse Proxy Gateway",
-                "version": "1.2.0",
+                "version": "2.0.0",
                 "listen": "http://127.0.0.1:3425",
                 "native_daemon": true,
                 "requests_handled": count,
+                "success_count": sCount,
+                "error_count": eCount,
+                "masked_items_count": mCount,
+                "privacy_masking_enabled": currentPrivacy.enabled,
+                "active_profile": savedUpstream?.profileName ?? "未配置上游（本地回环）",
+                "active_base_url": savedUpstream?.baseURL ?? "",
                 "protocols": [
                     "openai-chat",
                     "openai-responses",
@@ -110,30 +222,85 @@ final class MagpieLocalGateway {
             return
         }
 
-        if rawRequest.method == "GET" && path == "/v1/models" {
-            let models: [[String: Any]] = [
-                ["id": "claude-sonnet-4-5", "object": "model", "owned_by": "magpie-anthropic"],
-                ["id": "claude-opus-4-5", "object": "model", "owned_by": "magpie-anthropic"],
-                ["id": "gemini-2.5-pro", "object": "model", "owned_by": "magpie-gemini"],
-                ["id": "gemini-2.5-flash", "object": "model", "owned_by": "magpie-gemini"],
-                ["id": "deepseek-r1", "object": "model", "owned_by": "magpie-deepseek"],
-                ["id": "gpt-4o", "object": "model", "owned_by": "magpie-openai"],
-                ["id": "group/opus-anywhere", "object": "model", "owned_by": "magpie-router"],
-                ["id": "group/sillytavern-rp", "object": "model", "owned_by": "magpie-router"]
+        if rawRequest.method == "GET" && path == "/api/config" {
+            let cfgPayload: [String: Any] = [
+                "configured": savedUpstream != nil,
+                "baseURL": savedUpstream?.baseURL ?? "",
+                "targetProtocol": savedUpstream?.targetProtocol ?? MagpieProtocol.openAIChat.rawValue,
+                "defaultModel": savedUpstream?.defaultModel ?? "",
+                "profileName": savedUpstream?.profileName ?? "",
+                "privacyMaskingEnabled": currentPrivacy.enabled
             ]
-            sendDict(client: client, status: "200 OK", dict: ["object": "list", "data": models])
+            sendDict(client: client, status: "200 OK", dict: cfgPayload)
             return
         }
 
         if rawRequest.method == "POST" && path == "/api/config" {
-            if let cfg = try? JSONDecoder().decode(MagpieUpstreamConfig.self, from: rawRequest.body) {
-                lock.lock()
-                upstreamConfig = cfg
-                lock.unlock()
-                sendDict(client: client, status: "200 OK", dict: ["ok": true, "targetProtocol": cfg.targetProtocol])
+            if var cfg = try? JSONDecoder().decode(MagpieUpstreamConfig.self, from: rawRequest.body) {
+                if !cfg.baseURL.isEmpty {
+                    let validation = URLValidator.validateAndNormalize(cfg.baseURL)
+                    switch validation {
+                    case .valid(let normalized):
+                        cfg.baseURL = normalized
+                    case .invalid(let reason):
+                        sendDict(client: client, status: "400 Bad Request", dict: ["ok": false, "error": reason])
+                        return
+                    }
+                }
+                applyUpstreamConfig(cfg)
+                let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "POST",
+                        path: path,
+                        inboundProtocol: "config",
+                        targetProtocol: cfg.targetProtocol,
+                        model: cfg.defaultModel,
+                        statusCode: 200,
+                        latencyMs: elapsed,
+                        upstreamURL: cfg.baseURL,
+                        maskedCount: 0,
+                        outcome: .localLoopback,
+                        errorMessage: nil,
+                        requestPreview: "更新配置: \(cfg.profileName ?? cfg.baseURL)",
+                        responsePreview: "已应用 \(cfg.targetProtocol)"
+                    ),
+                    isSuccess: true
+                )
+                sendDict(client: client, status: "200 OK", dict: [
+                    "ok": true,
+                    "baseURL": cfg.baseURL,
+                    "targetProtocol": cfg.targetProtocol,
+                    "defaultModel": cfg.defaultModel
+                ])
             } else {
-                sendDict(client: client, status: "400 Bad Request", dict: ["error": "Invalid config JSON"])
+                sendDict(client: client, status: "400 Bad Request", dict: ["ok": false, "error": "无效的 JSON 配置载荷"])
             }
+            return
+        }
+
+        if rawRequest.method == "GET" && path == "/api/logs" {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let currentLogs = recentLogs()
+            if let data = try? encoder.encode(currentLogs) {
+                sendJSON(client: client, status: "200 OK", bodyData: data)
+            } else {
+                sendDict(client: client, status: "200 OK", dict: ["logs": []])
+            }
+            return
+        }
+
+        if rawRequest.method == "DELETE" && path == "/api/logs" {
+            clearLogs()
+            sendDict(client: client, status: "200 OK", dict: ["ok": true])
+            return
+        }
+
+        if rawRequest.method == "GET" && path == "/v1/models" {
+            handleModelsRoute(client: client, path: path, savedUpstream: savedUpstream, startTime: startTime)
             return
         }
 
@@ -144,7 +311,9 @@ final class MagpieLocalGateway {
                 path: path,
                 headers: rawRequest.headers,
                 body: rawRequest.body,
-                savedUpstream: savedUpstream
+                savedUpstream: savedUpstream,
+                privacy: currentPrivacy,
+                startTime: startTime
             )
             return
         }
@@ -156,7 +325,9 @@ final class MagpieLocalGateway {
                 path: path,
                 headers: rawRequest.headers,
                 body: rawRequest.body,
-                savedUpstream: savedUpstream
+                savedUpstream: savedUpstream,
+                privacy: currentPrivacy,
+                startTime: startTime
             )
             return
         }
@@ -168,7 +339,9 @@ final class MagpieLocalGateway {
                 path: path,
                 headers: rawRequest.headers,
                 body: rawRequest.body,
-                savedUpstream: savedUpstream
+                savedUpstream: savedUpstream,
+                privacy: currentPrivacy,
+                startTime: startTime
             )
             return
         }
@@ -180,12 +353,136 @@ final class MagpieLocalGateway {
                 path: path,
                 headers: rawRequest.headers,
                 body: rawRequest.body,
-                savedUpstream: savedUpstream
+                savedUpstream: savedUpstream,
+                privacy: currentPrivacy,
+                startTime: startTime
             )
             return
         }
 
+        let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+        appendLog(
+            GatewayLogEntry(
+                id: UUID(),
+                timestamp: Date(),
+                method: rawRequest.method,
+                path: path,
+                inboundProtocol: "unknown",
+                targetProtocol: "-",
+                model: "-",
+                statusCode: 404,
+                latencyMs: elapsed,
+                upstreamURL: savedUpstream?.baseURL ?? "",
+                maskedCount: 0,
+                outcome: .error,
+                errorMessage: "未匹配到路由 \(path)",
+                requestPreview: "\(rawRequest.method) \(path)",
+                responsePreview: "404 Unknown route"
+            ),
+            isSuccess: false
+        )
         sendDict(client: client, status: "404 Not Found", dict: ["error": "Unknown route", "path": path])
+    }
+
+    private func handleModelsRoute(
+        client: Int32,
+        path: String,
+        savedUpstream: MagpieUpstreamConfig?,
+        startTime: CFAbsoluteTime
+    ) {
+        if let upstream = savedUpstream, !upstream.baseURL.isEmpty {
+            let proto = MagpieProtocol(rawValue: upstream.targetProtocol) ?? .openAIChat
+            let res = fetchUpstreamModelsSync(baseURL: upstream.baseURL, apiKey: upstream.apiKey, targetProto: proto)
+            if let models = res.models, !models.isEmpty {
+                let dataArray: [[String: Any]] = models.map { item in
+                    ["id": item.id, "object": "model", "owned_by": item.ownedBy]
+                }
+                let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "GET",
+                        path: path,
+                        inboundProtocol: "models",
+                        targetProtocol: proto.rawValue,
+                        model: "-",
+                        statusCode: 200,
+                        latencyMs: elapsed,
+                        upstreamURL: upstream.baseURL,
+                        maskedCount: 0,
+                        outcome: .forwarded,
+                        errorMessage: nil,
+                        requestPreview: "拉取上游模型列表",
+                        responsePreview: "返回 \(models.count) 个模型"
+                    ),
+                    isSuccess: true
+                )
+                sendDict(client: client, status: "200 OK", dict: [
+                    "object": "list",
+                    "source": "upstream",
+                    "data": dataArray
+                ])
+                return
+            } else {
+                let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+                let errMsg = res.errorMessage ?? "上游模型列表返回为空"
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "GET",
+                        path: path,
+                        inboundProtocol: "models",
+                        targetProtocol: proto.rawValue,
+                        model: "-",
+                        statusCode: res.statusCode > 0 ? res.statusCode : 502,
+                        latencyMs: elapsed,
+                        upstreamURL: upstream.baseURL,
+                        maskedCount: 0,
+                        outcome: .error,
+                        errorMessage: errMsg,
+                        requestPreview: "拉取上游模型列表",
+                        responsePreview: errMsg
+                    ),
+                    isSuccess: false
+                )
+                sendDict(client: client, status: "200 OK", dict: [
+                    "object": "list",
+                    "source": "local_fallback",
+                    "upstream_error": errMsg,
+                    "data": Self.fallbackModels
+                ])
+                return
+            }
+        }
+
+        let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+        appendLog(
+            GatewayLogEntry(
+                id: UUID(),
+                timestamp: Date(),
+                method: "GET",
+                path: path,
+                inboundProtocol: "models",
+                targetProtocol: "local",
+                model: "-",
+                statusCode: 200,
+                latencyMs: elapsed,
+                upstreamURL: "local://127.0.0.1:3425",
+                maskedCount: 0,
+                outcome: .localLoopback,
+                errorMessage: nil,
+                requestPreview: "获取本地内置模型列表",
+                responsePreview: "返回 \(Self.fallbackModels.count) 个内置模型"
+            ),
+            isSuccess: true
+        )
+        sendDict(client: client, status: "200 OK", dict: [
+            "object": "list",
+            "source": "local_builtin",
+            "data": Self.fallbackModels
+        ])
     }
 
     private func handleTranslationRoute(
@@ -194,34 +491,167 @@ final class MagpieLocalGateway {
         path: String,
         headers: [String: String],
         body: Data,
-        savedUpstream: MagpieUpstreamConfig?
+        savedUpstream: MagpieUpstreamConfig?,
+        privacy: PrivacyMaskSettings,
+        startTime: CFAbsoluteTime
     ) {
         guard let inboundJSON = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
-            sendDict(client: client, status: "400 Bad Request", dict: ["error": "Request body must be valid JSON"])
+            let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+            appendLog(
+                GatewayLogEntry(
+                    id: UUID(),
+                    timestamp: Date(),
+                    method: "POST",
+                    path: path,
+                    inboundProtocol: inbound.rawValue,
+                    targetProtocol: "-",
+                    model: "-",
+                    statusCode: 400,
+                    latencyMs: elapsed,
+                    upstreamURL: savedUpstream?.baseURL ?? "",
+                    maskedCount: 0,
+                    outcome: .error,
+                    errorMessage: "请求体不是合法的 JSON",
+                    requestPreview: String(data: body.prefix(160), encoding: .utf8) ?? "<binary>",
+                    responsePreview: "400 Bad Request"
+                ),
+                isSuccess: false
+            )
+            sendDict(client: client, status: "400 Bad Request", dict: ["error": ["message": "Request body must be valid JSON"]])
             return
         }
 
-        let canonicalChat = ProtocolTranslator.toCanonicalOpenAIChat(from: inbound, payload: inboundJSON, path: path)
-        let model = (canonicalChat["model"] as? String) ?? "magpie-local-gateway"
+        let rawCanonicalChat = ProtocolTranslator.toCanonicalOpenAIChat(from: inbound, payload: inboundJSON, path: path)
+        let model = (rawCanonicalChat["model"] as? String)
+            ?? savedUpstream?.defaultModel
+            ?? "magpie-local-gateway"
+
+        let userMessages = (rawCanonicalChat["messages"] as? [[String: Any]]) ?? []
+        let originalPreview = extractLastUserPreview(from: userMessages)
+
+        // Apply Privacy Masking before sending upstream or running local echo
+        let maskedTuple = PrivacyMasker.maskJSONObject(rawCanonicalChat, settings: privacy)
+        let canonicalChat = (maskedTuple.masked as? [String: Any]) ?? rawCanonicalChat
+        let replacements = maskedTuple.replacements
+        let maskedCount = maskedTuple.count
 
         let upstreamURL = headers["x-magpie-upstream-url"] ?? savedUpstream?.baseURL
         let upstreamProtoRaw = headers["x-magpie-upstream-protocol"] ?? savedUpstream?.targetProtocol ?? inbound.rawValue
         let targetProto = MagpieProtocol(rawValue: upstreamProtoRaw) ?? inbound
         let upstreamKey = headers["x-magpie-upstream-key"] ?? savedUpstream?.apiKey
 
-        if let base = upstreamURL, !base.isEmpty, let key = upstreamKey, !key.isEmpty {
-            let outboundPayload = ProtocolTranslator.fromCanonicalOpenAIChat(canonicalChat, to: targetProto)
-            if let forwarded = forwardUpstream(baseURL: base, apiKey: key, targetProto: targetProto, model: model, payload: outboundPayload) {
-                let canonicalResp = ProtocolTranslator.responseToCanonicalOpenAIChat(from: targetProto, payload: forwarded, model: model)
-                let clientResp = ProtocolTranslator.responseFromCanonicalOpenAIChat(canonicalResp, to: inbound, model: model)
-                sendDict(client: client, status: "200 OK", dict: clientResp)
+        if let base = upstreamURL, !base.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let key = upstreamKey ?? ""
+            if key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+                let errMsg = "当前已指定上游地址（\(base)），但未配置 API Key，无法转发请求。"
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "POST",
+                        path: path,
+                        inboundProtocol: inbound.rawValue,
+                        targetProtocol: targetProto.rawValue,
+                        model: model,
+                        statusCode: 401,
+                        latencyMs: elapsed,
+                        upstreamURL: base,
+                        maskedCount: maskedCount,
+                        outcome: .error,
+                        errorMessage: errMsg,
+                        requestPreview: originalPreview,
+                        responsePreview: errMsg
+                    ),
+                    isSuccess: false
+                )
+                sendDict(client: client, status: "401 Unauthorized", dict: [
+                    "error": [
+                        "message": errMsg,
+                        "type": "magpie_missing_api_key"
+                    ]
+                ])
+                return
+            }
+
+            var outboundPayload = ProtocolTranslator.fromCanonicalOpenAIChat(canonicalChat, to: targetProto)
+            outboundPayload["stream"] = false
+
+            let forwardResult = forwardUpstream(
+                baseURL: base,
+                apiKey: key,
+                targetProto: targetProto,
+                model: model,
+                payload: outboundPayload
+            )
+
+            if (200..<300).contains(forwardResult.statusCode), let forwardedJSON = forwardResult.json {
+                let canonicalResp = ProtocolTranslator.responseToCanonicalOpenAIChat(from: targetProto, payload: forwardedJSON, model: model)
+                let unmaskedCanonical = (PrivacyMasker.unmaskJSONObject(canonicalResp, replacements: replacements) as? [String: Any]) ?? canonicalResp
+                let clientResp = ProtocolTranslator.responseFromCanonicalOpenAIChat(unmaskedCanonical, to: inbound, model: model)
+                let respText = extractAssistantPreview(from: unmaskedCanonical)
+
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "POST",
+                        path: path,
+                        inboundProtocol: inbound.rawValue,
+                        targetProtocol: targetProto.rawValue,
+                        model: model,
+                        statusCode: forwardResult.statusCode,
+                        latencyMs: forwardResult.latencyMs,
+                        upstreamURL: base,
+                        maskedCount: maskedCount,
+                        outcome: .forwarded,
+                        errorMessage: nil,
+                        requestPreview: originalPreview,
+                        responsePreview: respText
+                    ),
+                    isSuccess: true
+                )
+                sendDict(client: client, status: httpStatusString(for: forwardResult.statusCode), dict: clientResp)
+                return
+            } else {
+                let errCode = forwardResult.statusCode > 0 ? forwardResult.statusCode : 502
+                let errMsg = forwardResult.errorMessage ?? "上游请求失败（HTTP \(errCode)）"
+                appendLog(
+                    GatewayLogEntry(
+                        id: UUID(),
+                        timestamp: Date(),
+                        method: "POST",
+                        path: path,
+                        inboundProtocol: inbound.rawValue,
+                        targetProtocol: targetProto.rawValue,
+                        model: model,
+                        statusCode: errCode,
+                        latencyMs: forwardResult.latencyMs,
+                        upstreamURL: base,
+                        maskedCount: maskedCount,
+                        outcome: .error,
+                        errorMessage: errMsg,
+                        requestPreview: originalPreview,
+                        responsePreview: errMsg
+                    ),
+                    isSuccess: false
+                )
+                sendDict(client: client, status: httpStatusString(for: errCode), dict: [
+                    "error": [
+                        "message": errMsg,
+                        "type": "magpie_upstream_error",
+                        "upstream_status": errCode
+                    ]
+                ])
                 return
             }
         }
 
-        let userMessages = (canonicalChat["messages"] as? [[String: Any]]) ?? []
-        let lastContent = (userMessages.last?["content"] as? String) ?? ""
-        let localText = "[Magpie iOS 127.0.0.1:3425 已连通] 入口协议=\(inbound.rawValue), 目标协议=\(targetProto.rawValue), 模型=\(model)。已验证请求结构（消息数=\(userMessages.count), 末句长度=\(lastContent.count)）。配置上游 URL/Key 后将通过 URLSession 实时转发。"
+        // No upstream configured: explicit local loopback mode
+        let maskedMessages = (canonicalChat["messages"] as? [[String: Any]]) ?? []
+        let lastMaskedContent = (maskedMessages.last?["content"] as? String) ?? ""
+        let localText = "[Magpie 本地回环] 入口=\(inbound.rawValue) → 目标=\(targetProto.rawValue)，模型=\(model)。" +
+            (maskedCount > 0 ? "已触发隐私脱敏 \(maskedCount) 处（发送到上游前将为占位符：\(lastMaskedContent)）。" : "当前未启用上游反代地址，返回本地诊断回显。")
         let canonicalLocal: [String: Any] = [
             "id": "chatcmpl-magpie-ios",
             "object": "chat.completion",
@@ -236,14 +666,120 @@ final class MagpieLocalGateway {
                 "finish_reason": "stop"
             ]],
             "usage": [
-                "prompt_tokens": max(1, lastContent.count / 4),
-                "completion_tokens": 32,
-                "total_tokens": max(1, lastContent.count / 4) + 32
+                "prompt_tokens": max(1, lastMaskedContent.count / 4),
+                "completion_tokens": 36,
+                "total_tokens": max(1, lastMaskedContent.count / 4) + 36
             ]
         ]
 
         let formatted = ProtocolTranslator.responseFromCanonicalOpenAIChat(canonicalLocal, to: inbound, model: model)
+        let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000))
+        appendLog(
+            GatewayLogEntry(
+                id: UUID(),
+                timestamp: Date(),
+                method: "POST",
+                path: path,
+                inboundProtocol: inbound.rawValue,
+                targetProtocol: targetProto.rawValue,
+                model: model,
+                statusCode: 200,
+                latencyMs: elapsed,
+                upstreamURL: "local://127.0.0.1:3425",
+                maskedCount: maskedCount,
+                outcome: .localLoopback,
+                errorMessage: nil,
+                requestPreview: originalPreview,
+                responsePreview: localText
+            ),
+            isSuccess: true
+        )
         sendDict(client: client, status: "200 OK", dict: formatted)
+    }
+
+    private func fetchUpstreamModelsSync(
+        baseURL: String,
+        apiKey: String,
+        targetProto: MagpieProtocol
+    ) -> (models: [MagpieModelItem]?, statusCode: Int, errorMessage: String?) {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/+$", with: "", options: .regularExpression)
+
+        let endpoint: String
+        switch targetProto {
+        case .geminiV1Beta:
+            let encodedKey = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apiKey
+            endpoint = "\(trimmed)/v1beta/models?key=\(encodedKey)"
+        default:
+            endpoint = trimmed.hasSuffix("/v1") ? "\(trimmed)/models" : "\(trimmed)/v1/models"
+        }
+
+        guard let url = URL(string: endpoint) else {
+            return (nil, 400, "无法构造模型列表地址：\(endpoint)")
+        }
+
+        var req = URLRequest(url: url, timeoutInterval: 15)
+        req.httpMethod = "GET"
+        switch targetProto {
+        case .openAIChat, .openAIResponses:
+            if !apiKey.isEmpty { req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        case .anthropicMessages:
+            if !apiKey.isEmpty {
+                req.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+                req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            }
+        case .geminiV1Beta:
+            break
+        }
+
+        let sem = DispatchSemaphore(value: 0)
+        var outModels: [MagpieModelItem]?
+        var outCode = 0
+        var outErr: String?
+
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let error = error {
+                outErr = Self.describeNetworkError(error)
+                sem.signal()
+                return
+            }
+            guard let httpResp = response as? HTTPURLResponse else {
+                outErr = "未收到有效 HTTP 响应"
+                sem.signal()
+                return
+            }
+            outCode = httpResp.statusCode
+            guard (200..<300).contains(httpResp.statusCode) else {
+                outErr = Self.extractHTTPErrorMessage(statusCode: httpResp.statusCode, data: data)
+                sem.signal()
+                return
+            }
+            guard let data = data,
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                outErr = "上游返回内容不是有效 JSON"
+                sem.signal()
+                return
+            }
+
+            if let dataArr = json["data"] as? [[String: Any]] {
+                outModels = dataArr.compactMap { row in
+                    guard let id = row["id"] as? String, !id.isEmpty else { return nil }
+                    let owner = (row["owned_by"] as? String) ?? "upstream"
+                    return MagpieModelItem(id: id, ownedBy: owner, source: "upstream")
+                }
+            } else if let geminiArr = json["models"] as? [[String: Any]] {
+                outModels = geminiArr.compactMap { row in
+                    guard let rawName = row["name"] as? String, !rawName.isEmpty else { return nil }
+                    let cleanName = rawName.replacingOccurrences(of: "models/", with: "")
+                    return MagpieModelItem(id: cleanName, ownedBy: "google-gemini", source: "upstream")
+                }
+            } else {
+                outErr = "上游返回结构中缺少 data 或 models 字段"
+            }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 16)
+        return (outModels, outCode, outErr)
     }
 
     private func forwardUpstream(
@@ -252,23 +788,26 @@ final class MagpieLocalGateway {
         targetProto: MagpieProtocol,
         model: String,
         payload: [String: Any]
-    ) -> [String: Any]? {
-        let trimmed = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+    ) -> UpstreamForwardResult {
+        var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+
         let endpointPath: String
         switch targetProto {
         case .openAIChat:
-            endpointPath = "\(trimmed)/v1/chat/completions"
+            endpointPath = trimmed.hasSuffix("/v1") ? "\(trimmed)/chat/completions" : "\(trimmed)/v1/chat/completions"
         case .openAIResponses:
-            endpointPath = "\(trimmed)/v1/responses"
+            endpointPath = trimmed.hasSuffix("/v1") ? "\(trimmed)/responses" : "\(trimmed)/v1/responses"
         case .anthropicMessages:
-            endpointPath = "\(trimmed)/v1/messages"
+            endpointPath = trimmed.hasSuffix("/v1") ? "\(trimmed)/messages" : "\(trimmed)/v1/messages"
         case .geminiV1Beta:
-            endpointPath = "\(trimmed)/v1beta/models/\(model):generateContent?key=\(apiKey)"
+            let encodedKey = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apiKey
+            endpointPath = "\(trimmed)/v1beta/models/\(model):generateContent?key=\(encodedKey)"
         }
 
         guard let url = URL(string: endpointPath),
               let bodyData = try? JSONSerialization.data(withJSONObject: payload) else {
-            return nil
+            return UpstreamForwardResult(statusCode: 400, json: nil, errorMessage: "无效的上游 URL 或请求载荷", latencyMs: 1)
         }
 
         var req = URLRequest(url: url, timeoutInterval: 60)
@@ -286,17 +825,136 @@ final class MagpieLocalGateway {
             break
         }
 
+        let start = CFAbsoluteTimeGetCurrent()
         let sem = DispatchSemaphore(value: 0)
+        var statusCode = 0
         var resultDict: [String: Any]?
-        URLSession.shared.dataTask(with: req) { data, _, _ in
-            if let data = data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                resultDict = json
+        var errorMsg: String?
+
+        URLSession.shared.dataTask(with: req) { data, response, error in
+            if let error = error {
+                errorMsg = Self.describeNetworkError(error)
+                sem.signal()
+                return
+            }
+            guard let httpResp = response as? HTTPURLResponse else {
+                errorMsg = "未收到有效 HTTP 响应"
+                sem.signal()
+                return
+            }
+            statusCode = httpResp.statusCode
+            if (200..<300).contains(httpResp.statusCode) {
+                if let data = data,
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    resultDict = json
+                } else {
+                    errorMsg = "上游返回 HTTP \(httpResp.statusCode)，但响应体不是合法 JSON"
+                }
+            } else {
+                errorMsg = Self.extractHTTPErrorMessage(statusCode: httpResp.statusCode, data: data)
             }
             sem.signal()
         }.resume()
         _ = sem.wait(timeout: .now() + 65)
-        return resultDict
+
+        let elapsed = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
+        if statusCode == 0 && errorMsg == nil {
+            errorMsg = "请求上游超时（超过 65 秒无响应）"
+        }
+        return UpstreamForwardResult(statusCode: statusCode, json: resultDict, errorMessage: errorMsg, latencyMs: elapsed)
+    }
+
+    static func describeNetworkError(_ error: Error) -> String {
+        let nsErr = error as NSError
+        if nsErr.domain == NSURLErrorDomain {
+            switch nsErr.code {
+            case NSURLErrorTimedOut:
+                return "连接超时：上游服务器未在规定时间内响应"
+            case NSURLErrorCannotFindHost:
+                return "域名解析失败（DNS 无法找到主机），请检查服务器地址拼写"
+            case NSURLErrorCannotConnectToHost:
+                return "无法建立 TCP 连接：请检查端口号或确认服务已启动"
+            case NSURLErrorNetworkConnectionLost:
+                return "网络连接意外中断"
+            case NSURLErrorNotConnectedToInternet:
+                return "设备当前无可用网络连接"
+            case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasBadDate:
+                return "TLS/HTTPS 证书校验失败，请检查证书或尝试核对协议"
+            case NSURLErrorUnsupportedURL, NSURLErrorBadURL:
+                return "服务器地址格式无效"
+            default:
+                return "网络请求错误（\(nsErr.code)）：\(nsErr.localizedDescription)"
+            }
+        }
+        return error.localizedDescription
+    }
+
+    static func extractHTTPErrorMessage(statusCode: Int, data: Data?) -> String {
+        var detail = ""
+        if let data = data {
+            if let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                if let errObj = json["error"] as? [String: Any], let msg = errObj["message"] as? String {
+                    detail = msg
+                } else if let msg = json["message"] as? String {
+                    detail = msg
+                } else if let msg = json["error"] as? String {
+                    detail = msg
+                }
+            } else if let raw = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty {
+                detail = String(raw.prefix(180))
+            }
+        }
+
+        let hint: String
+        switch statusCode {
+        case 401: hint = "鉴权失败（API Key 无效或缺失）"
+        case 403: hint = "拒绝访问（无权限或风控拦截）"
+        case 404: hint = "接口路径不存在（请核对目标协议或 Base URL 是否重复包含 /v1）"
+        case 429: hint = "触发上游限流或额度耗尽"
+        case 500...599: hint = "上游服务端内部错误"
+        default: hint = "上游返回异常状态"
+        }
+
+        if detail.isEmpty {
+            return "HTTP \(statusCode)：\(hint)"
+        }
+        return "HTTP \(statusCode)（\(hint)）：\(detail)"
+    }
+
+    private func httpStatusString(for code: Int) -> String {
+        switch code {
+        case 200: return "200 OK"
+        case 201: return "201 Created"
+        case 204: return "204 No Content"
+        case 400: return "400 Bad Request"
+        case 401: return "401 Unauthorized"
+        case 403: return "403 Forbidden"
+        case 404: return "404 Not Found"
+        case 429: return "429 Too Many Requests"
+        case 500: return "500 Internal Server Error"
+        case 502: return "502 Bad Gateway"
+        case 503: return "503 Service Unavailable"
+        case 504: return "504 Gateway Timeout"
+        default: return "\(code) Status"
+        }
+    }
+
+    private func extractLastUserPreview(from messages: [[String: Any]]) -> String {
+        guard let last = messages.last else { return "(空消息)" }
+        if let str = last["content"] as? String {
+            return String(str.prefix(120))
+        }
+        return "(结构化消息)"
+    }
+
+    private func extractAssistantPreview(from canonical: [String: Any]) -> String {
+        if let choices = canonical["choices"] as? [[String: Any]],
+           let first = choices.first,
+           let msg = first["message"] as? [String: Any],
+           let text = msg["content"] as? String {
+            return String(text.prefix(160))
+        }
+        return "(已返回结构化响应)"
     }
 
     private struct ParsedHTTPRequest {

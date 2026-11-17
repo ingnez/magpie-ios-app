@@ -23,10 +23,6 @@ targets:
         excludes:
           - "Info.plist"
           - "Entitlements.plist"
-          - "www/**"
-      - path: Magpie/www
-        type: folder
-        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: Magpie
@@ -34,6 +30,7 @@ targets:
         INFOPLIST_FILE: Magpie/Info.plist
         CODE_SIGN_ENTITLEMENTS: Magpie/Entitlements.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
         SUPPORTS_MACCATALYST: "NO"
     schemes:
       Magpie:

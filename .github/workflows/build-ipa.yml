@@ -47,7 +47,6 @@ jobs:
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/Magpie.app"
           test -d "$APP_PATH"
           test -f "$APP_PATH/Magpie"
-          test -f "$APP_PATH/www/index.html"
           file "$APP_PATH/Magpie"
           otool -L "$APP_PATH/Magpie"
           mkdir -p build/ipa/Payload
