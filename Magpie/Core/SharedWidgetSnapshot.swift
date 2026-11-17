@@ -213,7 +213,7 @@ enum MagpieWidgetSnapshotStore {
         if containerURL != nil {
             mode = "App Group 容器 (\(MagpieSharedConstants.appGroupID))"
         } else if suiteAvailable {
-            mode = "App Group UserDefaults (\(MagpieSharedConstants.appGroupID))"
+            mode = "App Group 容器未获授权；当前仅确认 App 内预览，真机组件需签名授权"
         } else {
             mode = "进程内缓存（无签名构建下 App Group 未授权，仅支持 App 内预览）"
         }

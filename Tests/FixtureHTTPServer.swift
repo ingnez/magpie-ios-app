@@ -9,6 +9,7 @@ final class FixtureHTTPServer {
     private let lock = NSLock()
     private var rows: [[String: Any]] = []
     private var traceRows: [[String: Any]] = []
+    private var failSwitchOnce = false
     private var responses: [String: Any]
     var port: UInt16 { listener.port!.rawValue }
 
@@ -43,6 +44,14 @@ final class FixtureHTTPServer {
         guard ready.wait(timeout: .now() + 10) == .success, listener.port != nil else {
             throw NSError(domain: "Fixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Simulator fixture listener could not start"])
         }
+    }
+    func failNextSwitchAfterApplying() { lock.lock(); failSwitchOnce = true; lock.unlock() }
+    func accountOrder(_ providerID: String) -> [String] {
+        lock.lock(); defer { lock.unlock() }
+        let state = responses["/api/providers"] as? [String: Any]
+        let providers = state?["providers"] as? [[String: Any]] ?? []
+        let account = providers.first(where: { $0["id"] as? String == providerID })?["account"] as? [String: Any]
+        return (account?["logins"] as? [[String: Any]] ?? []).compactMap { $0["user"] as? String }
     }
     func stop() { listener.cancel() }
     func requests() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return rows }
@@ -182,7 +191,15 @@ final class FixtureHTTPServer {
                     return m
                 }
             }
-            json(connection, snapshot("/api/providers")!)
+            lock.lock()
+            let fail = failSwitchOnce
+            failSwitchOnce = false
+            lock.unlock()
+            if fail {
+                json(connection, ["error": "simulated response failure after applying account order"], status: 500)
+            } else {
+                json(connection, snapshot("/api/providers")!)
+            }
         }
         else if path == "/api/provider/save" {
             mutateProviders { providers in

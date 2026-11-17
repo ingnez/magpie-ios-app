@@ -651,6 +651,21 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("quickSwitchAlertButton_demo2@gmail.com", app: app, scroll: true)
         XCTAssertTrue(app.otherElements["quickSwitchResultBanner"].waitForExistence(timeout: 10))
 
+        // An applied server change whose response fails must be inspected and recovered.
+        tap("undoQuickSwitchButton", app: app)
+        let undoDone = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            server.accountOrder("antigravity").first == "demo1@gmail.com" && !app.buttons["undoQuickSwitchButton"].exists
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [undoDone], timeout: 15), .completed)
+        server.failNextSwitchAfterApplying()
+        tap("quickSwitchAlertButton_demo2@gmail.com", app: app, scroll: true)
+        let recovery = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            server.accountOrder("antigravity").first == "demo1@gmail.com"
+                && app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "已读回确认原顺序恢复")).firstMatch.exists
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [recovery], timeout: 20), .completed)
+        shot("47-phase3-switch-recovery-demo")
+
         // 4. Verify WidgetKit preview cards + masked account cache + deep link navigation to Usage tab
         tap("quotaAlertsSection_widget", app: app)
         XCTAssertTrue(app.otherElements["widgetPreviewMediumCard"].waitForExistence(timeout: 5))
@@ -665,7 +680,7 @@ final class MagpieScreenshotTests: XCTestCase {
         // 5. Verify actual API switch call payload
         let switchBody = payload("/api/provider/arrange")
         XCTAssertEqual(switchBody["id"] as? String, "antigravity")
-        XCTAssertEqual((switchBody["accountOrder"] as? [String])?.first, "backup@example.com")
+        XCTAssertEqual((switchBody["accountOrder"] as? [String])?.first, "demo1@gmail.com")
         XCTAssertEqual(Set(switchBody["accountOrder"] as? [String] ?? []), Set(["demo1@gmail.com", "demo2@gmail.com", "backup@example.com"]))
         XCTAssertFalse(server.requests().contains { $0["path"] as? String == "/api/login/forget" })
     }

@@ -250,6 +250,7 @@ enum QuotaAlertEvaluator {
 
                 // Also evaluate key-pool explicit balance left/amount when available
                 for k in provider.keyList where k.on {
+                    if config.isMuted(providerID: provider.id, user: k.id) { continue }
                     if let bal = k.balance, let amount = bal.amount, let left = bal.left, amount > 0 {
                         let remaining = max(0, min(100, (left / amount) * 100.0))
                         let threshold = config.effectiveThreshold(providerID: provider.id, user: k.id)

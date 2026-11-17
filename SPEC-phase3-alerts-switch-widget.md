@@ -8,13 +8,13 @@ Status: approved-by-user-direction
 1. **余量预警（Quota Alert）**
    - 可配置剩余额度阈值（默认 `10%`，支持全局默认 + 按供应商 / 按账号单独覆写与静音）。
    - 支持按账号与按供应商两种视图聚合展示预警条目与剩余百分比。
-   - 在用户显式开启本地预警通知或点击请求权限时，合理调用 `UNUserNotificationCenter` 请求授权；按 `serverID + provider + account + window + resetBucket` 与恢复滞回（`remaining > threshold + 5%`）去重，避免重复刷屏。
+   - 在用户显式开启本地预警通知或点击请求权限时，合理调用 `UNUserNotificationCenter` 请求授权；按 `serverID + provider + account + window + resetBucket` 与恢复后重置（`remaining > threshold`）去重，避免重复刷屏。
    - 真实标注 iOS 后台刷新限制：客户端本地通知依赖前台刷新与系统不定期调度的 `BGAppRefreshTask`，不等同于服务端秒级实时推送；如需锁屏实时推送，需依赖 Magpie 服务端 Bark（`/api/settings/bark`）或未来 APNs 推送通道，UI 内提供直达 Bark 配置的入口。
 
 2. **一键切号（One-Tap Account Switch）**
    - 当账号限流冷却（`accountRests` / `429`）、余量低或失效时，提供便捷切换至**同平台其他可用账号 / Key** 的操作与明确反馈。
    - 使用核实存在的服务端接口：
-     - 订阅账号池：`POST /api/provider/arrange`（将目标账号置顶为 `#1`）+ `POST /api/login/switch`（`{"agent","user"}` 切换当前活跃账号）；失败时尝试按快照顺位回滚并报告每步真实状态，**绝不覆盖、删除或重置既有账号**。
+     - 订阅账号池：`POST /api/provider/arrange`（SetAccountOrder 本身按服务端 KeepLogin 策略切换首选与登录，避免重复调用 login/switch）；失败时尝试按快照顺位回滚并报告每步真实状态，**绝不覆盖、删除或重置既有账号**。
      - 多 Key 号池：`POST /api/keys/use`（`{"id","ref"}` 将可用 Key 设为优先）；支持切回原账号/Key。
    - 不擅自修改生产供应商 `routing` 策略或服务端路由组配置；服务端自动故障转移仍由网关现有策略负责，客户端清晰展示当前调度模式及可用候选账号排序。
 
@@ -51,8 +51,11 @@ Status: approved-by-user-direction
 ## 5. Success Criteria
 1. `ModelContractTests` 新增覆盖预警评估/去重/阈值覆写、一键切号候选排序、邮箱脱敏、深链解析与 Widget 快照编解码，全部通过。
 2. `MagpieWidget` 作为真实 `app-extension` target 编入 `Magpie.xcodeproj` 并包含在 `Magpie.app/PlugIns/MagpieWidget.appex` 与 `Magpie-unsigned.ipa` 中，Release 构建 exit 0。
-3. 模拟器 UI 测试（含深色/浅色与模拟数据）覆盖：修改余量阈值并按账号/供应商查看预警、从限流/预警账号一键切号并验证 `/api/provider/arrange` + `/api/login/switch` 调用与可撤销反馈、App 内桌面组件快照脱敏预览与深链跳转。
+3. 模拟器 UI 测试（含深色/浅色与模拟数据）覆盖：修改余量阈值并按账号/供应商查看预警、从限流/预警账号一键切号并验证 `/api/provider/arrange`、服务端读回、撤回与响应失败后恢复 调用与可撤销反馈、App 内桌面组件快照脱敏预览与深链跳转。
 
 ## 6. Out of Scope (Deferred to V2)
 - 服务端 APNs 推送证书与后端推送网关改造（当前通过服务端已有 Bark + 客户端本地通知实现）。
 - Widget Extension 内直接持有 `webKey` 发起直连请求（V1 为保护密钥边界仅读取主 App 写入的 App Group 脱敏快照）。
+
+## Verified backend semantics
+上游 internal/provider/account_order.go 的 SetAccountOrder 注释与实现确认首个 enabled 账号经 SwitchLogin 切换，KeepLoginAs 固定登录策略保留。单次 arrange 足够，客户端不修改 routing 或固定登录策略。生产 v0.1.3226 告警/Bark字段未返回，不能据此认定已配置或支持实时通知。
