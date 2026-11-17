@@ -7,6 +7,7 @@ struct DashboardView: View {
 
     @State private var traceMode: TraceDisplayMode = .live
     @State private var selectedRoute: RemoteRoute?
+    @State private var showingAgents = false
 
     enum TraceDisplayMode: String, CaseIterable {
         case live = "实时追踪"
@@ -33,6 +34,8 @@ struct DashboardView: View {
                         Task { await store.connectAndRefreshAll() }
                     }
                 } else {
+                    Button("Agents 与方案") { showingAgents = true }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     gatewayOverviewSection
                     traceSection
                 }
@@ -44,6 +47,7 @@ struct DashboardView: View {
         .refreshable {
             await store.connectAndRefreshAll()
         }
+        .sheet(isPresented: $showingAgents) { AgentsView(store: store) }
         .sheet(item: $selectedRoute) { route in
             RouteDetailSheet(store: store, route: route)
         }
@@ -188,6 +192,32 @@ struct DashboardView: View {
                     Spacer()
                     Button("复制") {
                         store.copyToClipboard(gw.publicURL ?? gw.url, label: "网关地址")
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                }
+            }
+
+            Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+
+            HStack(spacing: 8) {
+                Button("重启网关") {
+                    Task { _ = await store.restartGateway() }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                Button("接管网关") {
+                    Task { _ = await store.takeOverGateway() }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                Button(store.remoteSettings.gatewayPaused ? "恢复监听" : "暂停监听") {
+                    Task { await store.toggleGatewayPaused(!store.remoteSettings.gatewayPaused) }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+
+                if let firstProvider = store.providers.first {
+                    Button("解除冷却") {
+                        Task { _ = await store.liftGatewayKeyRest(key: firstProvider.id) }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                 }

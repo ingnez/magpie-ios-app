@@ -4,6 +4,23 @@ struct LogsPrivacyView: View {
     @ObservedObject var store: GatewayStore
     @Binding var presentingNewServer: Bool
 
+    enum SettingsSubTab: String, CaseIterable {
+        case all = "全部"
+        case privacy = "隐私脱敏"
+        case network = "网络与网关"
+        case system = "系统与同步"
+    }
+
+    @State private var subTab: SettingsSubTab = .all
+    @State private var consoleDestination: ConsoleDestination?
+    enum WorkspaceSheet: String, Identifiable {
+        case callerKeys, rules, proxies, backupSync, contextTune, systemSettings, modelPrice
+        var id: String { rawValue }
+    }
+
+    @State private var activeWorkspace: WorkspaceSheet?
+    @State private var selectedRecord: RemoteMaskingRecord?
+    @State private var confirmClearRecords = false
     @State private var editingServer: MagpieServerProfile?
     @State private var serverPendingDelete: MagpieServerProfile?
 
@@ -13,6 +30,8 @@ struct LogsPrivacyView: View {
     @State private var allowText = ""
 
     @State private var allowIPsInput = ""
+    @State private var corsInput = ""
+    @State private var portInput = "3425"
     @State private var barkServerInput = ""
     @State private var barkKeyInput = ""
     @State private var barkDailyInput = ""
@@ -24,18 +43,58 @@ struct LogsPrivacyView: View {
                     .font(.system(size: 24, weight: .semibold))
                     .foregroundColor(MagpieTheme.ink)
 
+                if store.activeServer != nil {
+                    subTabPicker
+                }
+
                 serversSection
 
                 if store.activeServer != nil {
-                    maskingControlSection
-                    maskingPreviewSection
-                    maskingRecordsSection
-                    networkAndBarkSection
+                    nativeWorkspacesSection
+
+                    if subTab == .all || subTab == .privacy {
+                        maskingControlSection
+                        maskingPreviewSection
+                        maskingRecordsSection
+                    }
+
+                    if subTab == .all || subTab == .network {
+                        networkAndBarkSection
+                    }
+
+                    if subTab == .all || subTab == .system {
+                        MinimalSection(title: "完整管理控制台") {
+                            Text("在 App 内打开服务器原版页面（已自动注入 HttpOnly 会话 Cookie）")
+                                .font(.caption)
+                                .foregroundColor(MagpieTheme.textSecondary)
+                            ForEach(ConsoleDestination.allCases) { destination in
+                                Button(destination.title) { consoleDestination = destination }
+                                    .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                            }
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 22)
             .padding(.top, 24)
             .padding(.bottom, 100)
+        }
+        .sheet(item: $consoleDestination) { destination in RemoteConsoleView(store: store, destination: destination) }
+        .sheet(item: $activeWorkspace) { sheet in
+            switch sheet {
+            case .callerKeys: CallerKeysView(store: store)
+            case .rules: MaskingRulesEditor(store: store)
+            case .proxies: ProxiesManagerView(store: store)
+            case .backupSync: BackupSyncView(store: store)
+            case .contextTune: ContextTuneView(store: store)
+            case .systemSettings: SystemSettingsEditorView(store: store)
+            case .modelPrice: ModelPriceEditorView(store: store)
+            }
+        }
+        .sheet(item: $selectedRecord) { record in MaskingRecordDetail(store: store, record: record) }
+        .alert("清空服务端脱敏记录？", isPresented: $confirmClearRecords) {
+            Button("清空", role: .destructive) { Task { await store.clearMaskingRecords() } }
+            Button("取消", role: .cancel) {}
         }
         .onAppear {
             syncLocalFieldDrafts()
@@ -75,9 +134,59 @@ struct LogsPrivacyView: View {
         }
     }
 
+    private var subTabPicker: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(SettingsSubTab.allCases, id: \.self) { item in
+                    let selected = subTab == item
+                    Button(item.rawValue) {
+                        subTab = item
+                    }
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .padding(.horizontal, 13)
+                    .padding(.vertical, 6)
+                    .background(selected ? MagpieTheme.ink : MagpieTheme.surface)
+                    .clipShape(Capsule())
+                    .overlay(Capsule().stroke(MagpieTheme.hairline, lineWidth: selected ? 0 : 1))
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var nativeWorkspacesSection: some View {
+        MinimalSection(title: "原生管理工作台", trailingText: "可编辑 · 实时写回") {
+            HStack(spacing: 8) {
+                Button("Caller Keys 管理") { activeWorkspace = .callerKeys }
+                Button("正则与敏感词") { activeWorkspace = .rules }
+            }
+            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+            HStack(spacing: 8) {
+                Button("代理池与网络配置") { activeWorkspace = .proxies }
+                Button("备份与云同步管理") { activeWorkspace = .backupSync }
+            }
+            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+            HStack(spacing: 8) {
+                Button("上下文与缓存调优") { activeWorkspace = .contextTune }
+                Button("系统通用与告警设置") { activeWorkspace = .systemSettings }
+            }
+            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+            HStack(spacing: 8) {
+                Button("模型自定义定价") { activeWorkspace = .modelPrice }
+            }
+            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+        }
+    }
+
     private func syncLocalFieldDrafts() {
         allowText = store.remoteSettings.redactAllow.joined(separator: ", ")
         allowIPsInput = store.remoteSettings.allowIPs.joined(separator: ", ")
+        corsInput = store.remoteSettings.corsOrigins.joined(separator: ", ")
+        portInput = String(store.remoteSettings.port)
         if barkServerInput.isEmpty {
             barkServerInput = store.remoteSettings.barkServer
         }
@@ -225,9 +334,18 @@ struct LogsPrivacyView: View {
             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("自定义前缀规则 (\(store.remoteSettings.redactRules.count))")
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundColor(MagpieTheme.textSecondary)
+                HStack {
+                    Text("自定义前缀与正则规则 (\(store.remoteSettings.redactRules.count))")
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                    Spacer()
+                    Button("打开完整规则编辑器") {
+                        activeWorkspace = .rules
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(MagpieTheme.ink)
+                    .buttonStyle(.plain)
+                }
 
                 ForEach(store.remoteSettings.redactRules) { rule in
                     HStack {
@@ -351,7 +469,7 @@ struct LogsPrivacyView: View {
                 HStack {
                     Spacer()
                     Button("清空服务端记录") {
-                        Task { await store.clearMaskingRecords() }
+                        confirmClearRecords = true
                     }
                     .font(.system(size: 12))
                     .foregroundColor(MagpieTheme.textMuted)
@@ -381,6 +499,8 @@ struct LogsPrivacyView: View {
                                 MagpieTag(text: "脱敏 \(rec.n) 处")
                             }
                         }
+                        Button("查看前后对照") { selectedRecord = rec }
+                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                         if !rec.values.isEmpty {
                             Text(rec.values.map { "\($0.k)(\($0.b))" }.joined(separator: " · "))
                                 .font(.system(size: 11.5))
@@ -393,10 +513,10 @@ struct LogsPrivacyView: View {
         }
     }
 
-    // MARK: - Network, Caller Keys & Bark Push
+    // MARK: - Network, Proxies, Caller Keys & Bark Push
 
     private var networkAndBarkSection: some View {
-        MinimalSection(title: "网关接入与 Bark 推送", trailingText: store.remoteSettings.lan ? "LAN 开启" : "仅本机") {
+        MinimalSection(title: "网关接入、代理池与 Bark 推送", trailingText: store.remoteSettings.lan ? "LAN 开启" : "仅本机") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("局域网共享网关")
@@ -417,25 +537,79 @@ struct LogsPrivacyView: View {
                 )
             }
 
-            if !store.callerKeys.isEmpty {
-                Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+            Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("命名代理池 (\(store.remoteSettings.proxies.count) 个)")
+                        .font(.system(size: 13.5, weight: .medium))
+                        .foregroundColor(MagpieTheme.ink)
+                    Text("当前上游代理：\(store.remoteSettings.proxy.isEmpty ? "跟随系统" : store.remoteSettings.proxy)")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                }
+                Spacer()
+                Button("管理代理池") {
+                    activeWorkspace = .proxies
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+            }
+
+            Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+
+            HStack {
                 Text("Caller Keys (\(store.callerKeys.count))")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(MagpieTheme.textSecondary)
+                Spacer()
+                Button("签发与管理") {
+                    activeWorkspace = .callerKeys
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(MagpieTheme.ink)
+                .buttonStyle(.plain)
+            }
+
+            if !store.callerKeys.isEmpty {
                 ForEach(store.callerKeys) { ck in
-                    HStack {
-                        Text(ck.name.isEmpty ? ck.id : ck.name)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundColor(MagpieTheme.ink)
-                        Spacer()
-                        Text(ck.masked)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundColor(MagpieTheme.textMuted)
+                    Button {
+                        activeWorkspace = .callerKeys
+                    } label: {
+                        HStack {
+                            Text(ck.name.isEmpty ? ck.id : ck.name)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(MagpieTheme.ink)
+                            Spacer()
+                            Text(ck.masked)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundColor(MagpieTheme.textMuted)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10))
+                                .foregroundColor(MagpieTheme.textMuted)
+                        }
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
             }
 
             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+
+            HStack(spacing: 8) {
+                MagpieInputField(
+                    label: "网关监听端口 (/api/settings/port)",
+                    placeholder: "3425",
+                    text: $portInput,
+                    monospaced: true,
+                    keyboardType: .numberPad
+                )
+                Button("保存端口") {
+                    if let p = Int(portInput), p > 0 && p < 65536 {
+                        Task { _ = await store.saveGatewayPort(p) }
+                    }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+            }
 
             MagpieInputField(
                 label: "IP 白名单（逗号分隔，空为不限制）",
@@ -445,6 +619,17 @@ struct LogsPrivacyView: View {
             )
             Button("保存 IP 白名单") {
                 Task { await store.saveAllowIPs(allowIPsInput) }
+            }
+            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+            MagpieInputField(
+                label: "CORS 允许跨域 Origin（逗号分隔）",
+                placeholder: "https://chat.example.com",
+                text: $corsInput,
+                monospaced: true
+            )
+            Button("保存 CORS 域名") {
+                Task { await store.saveCORSOrigins(corsInput) }
             }
             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
 

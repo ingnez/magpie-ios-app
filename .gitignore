@@ -1,0 +1,10 @@
+build/
+DerivedData/
+*.xcresult
+*.ipa
+Magpie.xcodeproj/
+MagpieUITests/
+__pycache__/
+.DS_Store
+.env
+*.pem
