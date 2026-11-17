@@ -269,18 +269,7 @@ enum AccountSwitchPlanner {
         usageMap: [String: RemoteLoginQuota],
         quotas: [RemoteUsageQuota]
     ) -> [RemoteLoginQuotaWindow] {
-        if let loginQuota = usageMap.first(where: { $0.key.caseInsensitiveCompare(user) == .orderedSame })?.value,
-           !loginQuota.windows.isEmpty {
-            return loginQuota.windows
-        }
-        if let q = quotas.first(where: {
-            ($0.provider.caseInsensitiveCompare(providerID) == .orderedSame
-             || $0.provider.caseInsensitiveCompare(agent) == .orderedSame)
-            && ($0.user?.caseInsensitiveCompare(user) == .orderedSame)
-        }) {
-            return q.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
-        }
-        return []
+        QuotaAlertEvaluator.resolveWindows(providerID: providerID, agent: agent, user: user, usageMap: usageMap, quotas: quotas)
     }
 
     private static func summarizeWindows(

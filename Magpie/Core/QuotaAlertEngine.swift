@@ -340,17 +340,26 @@ enum QuotaAlertEvaluator {
         usageMap: [String: RemoteLoginQuota],
         quotas: [RemoteUsageQuota]
     ) -> [RemoteLoginQuotaWindow] {
-        if let loginQuota = usageMap.first(where: { $0.key.caseInsensitiveCompare(user) == .orderedSame })?.value,
-           !loginQuota.windows.isEmpty {
-            return loginQuota.windows
-        }
-        if let q = quotas.first(where: {
+        let local = usageMap.first(where: { $0.key.caseInsensitiveCompare(user) == .orderedSame })?.value
+        let global = quotas.first(where: {
             ($0.provider.caseInsensitiveCompare(providerID) == .orderedSame
              || $0.provider.caseInsensitiveCompare(agent) == .orderedSame)
             && ($0.user?.caseInsensitiveCompare(user) == .orderedSame)
-        }) {
-            return q.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
+        })
+        func date(_ raw: String?) -> Date? {
+            guard let raw = raw else { return nil }
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = formatter.date(from: raw) { return date }
+            formatter.formatOptions = [.withInternetDateTime]
+            return formatter.date(from: raw)
         }
+        if let global = global, !global.windows.isEmpty,
+           let globalDate = date(global.readAt), globalDate > (date(local?.readAt) ?? .distantPast) {
+            return global.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
+        }
+        if let local = local, !local.windows.isEmpty { return local.windows }
+        if let global = global { return global.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) } }
         return []
     }
 
