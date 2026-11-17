@@ -25,6 +25,7 @@ extension GatewayStore {
         do {
             let usage = try await client.fetchLoginUsage(agent: agent)
             loginUsageByAgent[agent] = usage
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: true)
         } catch {
             // Best-effort; keep existing cache if vendor query fails temporarily
         }

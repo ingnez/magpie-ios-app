@@ -61,6 +61,16 @@ final class GatewayStore: ObservableObject {
 
     // MARK: - Navigation & Error Aggregation
     @Published var pendingAccountJump: AccountJumpTarget?
+    @Published var pendingDeepLink: MagpieDeepLink?
+
+    // MARK: - Phase 3: Quota Alerts, Quick Switch & Widget Snapshot
+    @Published var todayUsageSummary: RemoteUsageResponse?
+    @Published var alertConfig: QuotaAlertConfig = QuotaAlertConfig()
+    @Published var quotaAlerts: [QuotaAlertItem] = []
+    @Published var notificationAuthState: NotificationAuthState = .notDetermined
+    @Published var lastQuickSwitchResult: QuickSwitchResult?
+    @Published var isSwitchingAccount = false
+    @Published var widgetSnapshot: MagpieWidgetSnapshot = .unconfigured
 
     // MARK: - Masking & Caller Keys (`/api/masking/*`, `/api/caller-keys`)
     @Published var maskingSummary: RemoteMaskingSummary?
@@ -81,7 +91,13 @@ final class GatewayStore: ObservableObject {
 
     init() {
         loadServers()
+        loadAlertConfig()
+        QuotaNotificationManager.shared.configureDelegate()
+        QuotaNotificationManager.shared.onSelectDeepLink = { [weak self] url in
+            self?.handleDeepLink(url)
+        }
         Task {
+            await refreshNotificationAuthState()
             await configureClientForActiveServer()
             if activeServer != nil {
                 await connectAndRefreshAll()
@@ -256,9 +272,13 @@ final class GatewayStore: ObservableObject {
         historyDays = []
         historyRoutes = []
         usageSummary = nil
+        todayUsageSummary = nil
         usageError = nil
         pendingAccountJump = nil
         quotas = []
+        quotaAlerts = []
+        lastQuickSwitchResult = nil
+        recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
         maskingSummary = nil
         maskingRecords = []
         maskingPreview = nil
@@ -305,8 +325,12 @@ final class GatewayStore: ObservableObject {
                 group.addTask { await self.refreshGroups() }
                 group.addTask { await self.refreshTraceOnce() }
                 group.addTask { await self.refreshUsage() }
+                group.addTask { await self.refreshQuotas(asked: false, all: false) }
                 group.addTask { await self.refreshSettings() }
             }
+            await refreshAllLoginUsagesForSubscriptionProviders()
+            await refreshTodayUsageForWidgetIfNeeded()
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: true)
             startLiveTraceIfNeeded()
         } catch {
             isConnecting = false
@@ -434,6 +458,7 @@ final class GatewayStore: ObservableObject {
         codexDaemonStale = resp.codexDaemon
         codexAppStale = resp.codexApp
         codexProjectsShort = resp.codexProjects
+        recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
     }
 
     func applyGroupsResponse(_ resp: RemoteGroupsResponse) {
@@ -640,7 +665,12 @@ final class GatewayStore: ObservableObject {
         usageError = nil
         defer { isLoadingUsage = false }
         do {
-            usageSummary = try await client.fetchUsage(period: usagePeriod)
+            let fetched = try await client.fetchUsage(period: usagePeriod)
+            usageSummary = fetched
+            if usagePeriod == "today" {
+                todayUsageSummary = fetched
+            }
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             usageError = msg
@@ -665,6 +695,7 @@ final class GatewayStore: ObservableObject {
             let res = try await client.fetchQuotas(asked: asked, all: all)
             quotas = res.quotas
             isLoadingQuotas = false
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: !res.isReading)
             if res.isReading {
                 scheduleQuotaFollowUp()
             }
@@ -677,6 +708,7 @@ final class GatewayStore: ObservableObject {
     func refreshSingleQuota(provider: String, user: String?) async {
         do {
             quotas = try await client.refreshQuota(provider: provider, user: user)
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: true)
             showToast("已刷新额度窗口")
         } catch {
             recordActionError(error)
@@ -689,6 +721,7 @@ final class GatewayStore: ObservableObject {
             guard let self = self, !Task.isCancelled else { return }
             if let res = try? await self.client.fetchQuotas(asked: false, all: false) {
                 self.quotas = res.quotas
+                self.recomputeAlertsAndWidgetSnapshot(triggerNotifications: !res.isReading)
                 if res.isReading && !Task.isCancelled {
                     self.scheduleQuotaFollowUp()
                 }
