@@ -30,6 +30,7 @@ enum MagpieTab: String, CaseIterable, Identifiable {
 @main
 struct MagpieApp: App {
     @StateObject private var store = GatewayStore()
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("magpie.appearance") private var appearancePreference: String = "system"
 
     private var preferredScheme: ColorScheme? {

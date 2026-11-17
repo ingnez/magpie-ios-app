@@ -171,7 +171,6 @@ struct AccountErrorsView: View {
                 dismiss()
             } label: {
                 VStack(alignment: .leading, spacing: Spacing.md) {
-            VStack(alignment: .leading, spacing: Spacing.md) {
                 HStack(alignment: .top, spacing: Spacing.sm) {
                     Circle()
                         .fill(tone)
