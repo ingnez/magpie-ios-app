@@ -281,6 +281,12 @@ struct ModelContractTests {
         let dResRecovered = QuotaNotificationDeduplicator.filterItemsToNotify(items: [], history: dRes2.updatedHistory, now: t0.addingTimeInterval(1200), cooldownMinutes: 240)
         precondition(dResRecovered.updatedHistory.isEmpty, "Resolved alerts must clear dedup history")
 
+        // A later global refresh must replace an older per-account cached window.
+        let staleLogin = try decode([String: RemoteLoginQuota].self, #"{"a@gmail.com":{"provider":"antigravity","user":"a@gmail.com","readAt":"2026-11-18T00:00:00Z","windows":[{"name":"5h","used":20}]}}"#)
+        let freshQuotas = try decode([RemoteUsageQuota].self, #"[{"provider":"antigravity","user":"a@gmail.com","readAt":"2026-11-18T01:00:00Z","windows":[{"name":"5h","used":98}]}]"#)
+        let latestWindows = QuotaAlertEvaluator.resolveWindows(providerID: "antigravity", agent: "antigravity", user: "a@gmail.com", usageMap: staleLogin, quotas: freshQuotas)
+        precondition(latestWindows.first?.used == 98, "A stale per-account cache must not hide a newly exhausted global quota")
+
         // Phase 3: AccountSwitchPlanner (subscription & multi-key)
         let switchProviders = try decode([RemoteProvider].self, #"[{"id":"antigravity","name":"Antigravity","routing":"order","account":{"agent":"antigravity","user":"cool@gmail.com","logins":[{"agent":"antigravity","user":"cool@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"lapsed@gmail.com","active":false,"on":true,"lapsed":"expired"},{"agent":"antigravity","user":"low@gmail.com","active":false,"on":true},{"agent":"antigravity","user":"best@gmail.com","active":false,"on":true}]},"accountRests":{"cool@gmail.com":[{"why":"rate","status":429}]}},{"id":"custom","name":"Custom KeyPool","keyList":[{"id":"k1","name":"Primary","masked":"sk-1","active":true,"on":true,"rest":{"why":"rate","status":429}},{"id":"k2","name":"Disabled","masked":"sk-2","active":false,"on":false},{"id":"k3","name":"HealthyBackup","masked":"sk-3","active":false,"on":true,"weight":2}]}]"#)
         let switchUsage = try decode([String: [String: RemoteLoginQuota]].self, #"{"antigravity":{"low@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"","user":"low@gmail.com","windows":[{"name":"5h","used":85.0}]},"best@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"","user":"best@gmail.com","windows":[{"name":"5h","used":12.0}]}}}"#)
