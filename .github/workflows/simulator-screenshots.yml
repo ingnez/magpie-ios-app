@@ -92,6 +92,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/xcodebuild-test.log
 
+      - name: Verify UI request contracts
+        run: python3 Tests/verify_ui_requests.py
+
       - name: Extract PNG screenshots from xcresult
         if: always()
         run: |

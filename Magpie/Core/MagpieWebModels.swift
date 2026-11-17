@@ -462,6 +462,8 @@ struct RemoteSettingsState: Decodable, Equatable {
     var barkDaily: String = ""
     var barkKeySet: Bool = false
 
+    var automaticCheckins: [String: Bool] = [:]
+
     // Server metadata
     var version: String = ""
     var gateway: String = ""
@@ -479,6 +481,7 @@ struct RemoteSettingsState: Decodable, Equatable {
         case redactWordsAnyCase, redactWordsWhole, redactRules, redactActions, redactAllow, redactRouteTo
         case lan, allowIPs, mtls, port
         case barkServer, barkDaily, barkKeySet
+        case workbuddyCheckin, traeCheckin, minimaxCheckin, qoderCheckin
         case version, gateway, publicURL, onNetwork, gatewayOn, gatewayWhy, gatewayPaused
     }
 
@@ -509,6 +512,12 @@ struct RemoteSettingsState: Decodable, Equatable {
         barkDaily = try c.decodeIfPresent(String.self, forKey: .barkDaily) ?? ""
         barkKeySet = try c.decodeIfPresent(Bool.self, forKey: .barkKeySet) ?? false
 
+        automaticCheckins = [
+            "workbuddy": try c.decodeIfPresent(Bool.self, forKey: .workbuddyCheckin) ?? false,
+            "trae": try c.decodeIfPresent(Bool.self, forKey: .traeCheckin) ?? false,
+            "minimax": try c.decodeIfPresent(Bool.self, forKey: .minimaxCheckin) ?? false,
+            "qoder": try c.decodeIfPresent(Bool.self, forKey: .qoderCheckin) ?? false
+        ]
         version = try c.decodeIfPresent(String.self, forKey: .version) ?? ""
         gateway = try c.decodeIfPresent(String.self, forKey: .gateway) ?? ""
         publicURL = try c.decodeIfPresent(String.self, forKey: .publicURL) ?? ""

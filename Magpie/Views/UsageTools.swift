@@ -89,6 +89,8 @@ struct UsageAutomationView: View {
             .navigationTitle("签到与热身")
             .toolbar { Button("关闭") { dismiss() } }
         }.navigationViewStyle(.stack)
+        .onAppear { automatic = store.remoteSettings.automaticCheckins[provider] ?? false }
+        .onChange(of: provider) { value in automatic = store.remoteSettings.automaticCheckins[value] ?? false }
         .confirmationDialog("执行账号热身，可能消耗额度", isPresented: Binding(get: { confirmWarm != nil }, set: { if !$0 { confirmWarm = nil } }), titleVisibility: .visible) {
             Button("执行热身") {
                 guard let agent = confirmWarm else { return }

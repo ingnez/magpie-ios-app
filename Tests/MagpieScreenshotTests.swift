@@ -50,6 +50,7 @@ final class MagpieScreenshotTests: XCTestCase {
         shot("06-provider-multikey-demo")
         tap("模型管理", app: app)
         shot("07-provider-models-demo")
+        tap("全选", app: app)
         tap("保存选择", app: app, scroll: true)
         tap("高级配置", app: app)
         shot("08-provider-advanced-demo")

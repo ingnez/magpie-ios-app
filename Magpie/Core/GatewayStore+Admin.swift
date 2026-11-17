@@ -413,7 +413,7 @@ extension GatewayStore {
         do {
             let state = try await client.rescanAgents()
             applyStateResponse(state)
-            showToast("已重新扫描本机 Agents")
+            showToast("已重新扫描服务器上的 Agents")
         } catch {
             recordActionError(error)
         }

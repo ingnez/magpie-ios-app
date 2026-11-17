@@ -30,6 +30,8 @@ struct ModelContractTests {
         precondition(payload["name"] as? String == "Renamed")
         let key = try decode(RemoteCallerKey.self, #"{"id":"k","limit":{"period":"week","tokens":500000},"used":{"period":"week","tokens":100,"cost":0.01,"reset":"2026-11-23"}}"#)
         precondition(key.limit?.tokens == 500000 && key.used?.tokens == 100)
+        let settings = try decode(RemoteSettingsState.self, #"{"workbuddyCheckin":true,"qoderCheckin":false}"#)
+        precondition(settings.automaticCheckins["workbuddy"] == true && settings.automaticCheckins["qoder"] == false)
         print("PASS: origins, console routes, preserved provider fields, caller budgets")
         print("PASS: routing conditions, shared agent options, group disabled/off compatibility, numeric balance")
     }

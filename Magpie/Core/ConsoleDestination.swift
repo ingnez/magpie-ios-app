@@ -1,7 +1,7 @@
 import Foundation
 
 enum ConsoleDestination: String, CaseIterable, Identifiable {
-    case network, backup, sessions, library, plugins, pricing
+    case network, backup, sessions, library, plugins, pricing, tuning
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -10,7 +10,8 @@ enum ConsoleDestination: String, CaseIterable, Identifiable {
         case .sessions: return "Sessions"
         case .library: return "Library"
         case .plugins: return "Plugins"
-        case .pricing: return "定价与模型调优"
+        case .pricing: return "模型定价"
+        case .tuning: return "上下文调优"
         }
     }
     var queryItems: [URLQueryItem] {
@@ -22,7 +23,8 @@ enum ConsoleDestination: String, CaseIterable, Identifiable {
         case .sessions: view = "sessions"; tab = nil
         case .library: view = "library"; tab = nil
         case .plugins: view = "plugins"; tab = nil
-        case .pricing: view = "settings"; tab = "models"
+        case .pricing: view = "providers"; tab = nil
+        case .tuning: view = "usage"; tab = "context"
         }
         var query = [URLQueryItem(name: "mode", value: "window"), URLQueryItem(name: "view", value: view)]
         if let tab = tab { query.append(URLQueryItem(name: "tab", value: tab)) }

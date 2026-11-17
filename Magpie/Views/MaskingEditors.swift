@@ -89,7 +89,8 @@ struct MaskingRulesEditor: View {
             do {
                 let label = kind.trimmingCharacters(in: .whitespacesAndNewlines)
                 var rules = store.remoteSettings.redactRules
-                rules.append(RemoteRedactRule(kind: label, prefix: regex ? nil : pattern, regex: regex ? pattern : nil))
+                let rule = RemoteRedactRule(kind: label, prefix: regex ? nil : pattern, regex: regex ? pattern : nil)
+                if !rules.contains(rule) { rules.append(rule) }
                 store.remoteSettings = try await store.client.updateRedactRules(rules)
                 var actions = store.remoteSettings.redactActions
                 if !action.isEmpty { actions[label] = action }
