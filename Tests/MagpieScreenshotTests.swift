@@ -591,4 +591,76 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(server.trace().contains { $0["path"] as? String == "/api/login/usage" }, "Must refresh per-account quota usage")
     }
 
+    func testCapturePhase3AlertsSwitchWidget() throws {
+        let server = try FixtureHTTPServer()
+        fixture = server
+        func payload(_ path: String) -> [String: Any] {
+            let row = server.requests().last { $0["path"] as? String == path }
+            XCTAssertNotNil(row, "UI must call \(path)")
+            return row?["body"] as? [String: Any] ?? [:]
+        }
+
+        let app = XCUIApplication()
+        app.launch()
+        tap("连接 magpie web", app: app)
+        let name = app.textFields["例如：家里 NAS / 云服务器"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("演示实例 · Phase 3")
+        let address = app.textFields["https://your-host:3430/?k=..."]
+        address.tap(); address.typeText("http://127.0.0.1:\(server.port)/?k=fixture-only-not-a-real-key")
+        tap("保存并连接", app: app)
+        XCTAssertTrue(app.staticTexts["1 模型在线"].waitForExistence(timeout: 20))
+
+        // 1. One-tap switch from Account Errors view (rate-limited demo2@gmail.com -> demo1@gmail.com)
+        tap("dashboardAccountErrorsButton", app: app)
+        XCTAssertTrue(app.staticTexts["账号异常总览"].waitForExistence(timeout: 10))
+        tap("quickSwitchFromError_demo2@gmail.com", app: app, scroll: true)
+        XCTAssertTrue(app.otherElements["quickSwitchResultBanner"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["undoQuickSwitchButton"].waitForExistence(timeout: 5))
+        shot("41-phase3-error-quick-switch-demo")
+        tap("关闭", app: app)
+
+        // 2. Open Quota Alerts sheet -> configure threshold 40% so demo2 (38% remaining) triggers alert
+        tap("dashboardQuotaAlertsButton", app: app)
+        XCTAssertTrue(app.staticTexts["余量预警与桌面组件"].waitForExistence(timeout: 10))
+        tap("quotaAlertsSection_rules", app: app)
+        let thresholdField = app.textFields["globalAlertThresholdField"]
+        XCTAssertTrue(thresholdField.waitForExistence(timeout: 5))
+        thresholdField.tap()
+        thresholdField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "40")
+        tap("收起键盘", app: app)
+        tap("saveGlobalAlertThresholdButton", app: app)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "40%")).firstMatch.waitForExistence(timeout: 5))
+        shot("42-phase3-alert-rules-demo")
+
+        // 3. Verify alerts grouped by account & by provider, then quick-switch from alert card
+        tap("quotaAlertsSection_alerts", app: app)
+        XCTAssertTrue(app.otherElements["quotaAlertCard_demo2@gmail.com"].waitForExistence(timeout: 10))
+        shot("43-phase3-alerts-by-account-demo")
+
+        tap("alertViewMode_provider", app: app)
+        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 5))
+        shot("44-phase3-alerts-by-provider-demo")
+
+        tap("alertViewMode_account", app: app)
+        tap("quickSwitchAlertButton_demo2@gmail.com", app: app, scroll: true)
+        XCTAssertTrue(app.otherElements["quickSwitchResultBanner"].waitForExistence(timeout: 10))
+
+        // 4. Verify WidgetKit preview cards + masked account cache + deep link navigation to Usage tab
+        tap("quotaAlertsSection_widget", app: app)
+        XCTAssertTrue(app.otherElements["widgetPreviewMediumCard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.otherElements["widgetPreviewSmallCard"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "de***")).firstMatch.waitForExistence(timeout: 5))
+        shot("45-phase3-widget-preview-demo")
+
+        tap("testWidgetDeepLinkUsageButton", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["用量趋势"].waitForExistence(timeout: 10))
+        shot("46-phase3-deeplink-usage-demo")
+
+        // 5. Verify actual API switch call payload
+        let switchBody = payload("/api/login/switch")
+        XCTAssertEqual(switchBody["agent"] as? String, "antigravity")
+        XCTAssertEqual(switchBody["user"] as? String, "demo1@gmail.com")
+    }
+
 }

@@ -42,16 +42,22 @@ jobs:
             DEVELOPMENT_TEAM="" \
             clean build | tee build/xcodebuild.log
 
-      - name: Package & verify Magpie-unsigned.ipa
+      - name: Package & verify Magpie-unsigned.ipa (including MagpieWidget.appex)
         run: |
           APP_PATH="build/DerivedData/Build/Products/Release-iphoneos/Magpie.app"
+          EXT_PATH="$APP_PATH/PlugIns/MagpieWidget.appex"
           test -d "$APP_PATH"
           test -f "$APP_PATH/Magpie"
+          test -d "$EXT_PATH"
+          test -f "$EXT_PATH/MagpieWidget"
           file "$APP_PATH/Magpie"
+          file "$EXT_PATH/MagpieWidget"
           otool -L "$APP_PATH/Magpie"
+          otool -L "$EXT_PATH/MagpieWidget" | grep -E "WidgetKit|SwiftUI"
           mkdir -p build/ipa/Payload
           cp -R "$APP_PATH" build/ipa/Payload/Magpie.app
           (cd build/ipa && zip -qry ../../Magpie-unsigned.ipa Payload)
+          unzip -l Magpie-unsigned.ipa | grep "Payload/Magpie.app/PlugIns/MagpieWidget.appex/MagpieWidget"
           ls -lh Magpie-unsigned.ipa
 
       - name: Upload Magpie-unsigned.ipa artifact

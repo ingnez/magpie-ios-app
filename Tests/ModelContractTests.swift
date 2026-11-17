@@ -239,6 +239,88 @@ struct ModelContractTests {
         precondition(singleDay.apiPeriodString(timeZone: tz) == "2026-11-17..2026-11-17")
         precondition(singleDay.displayLabel(timeZone: tz) == "2026-11-17 当天")
 
+        // Phase 3: QuotaAlertConfig, QuotaAlertEvaluator, QuotaNotificationDeduplicator
+        var alertCfg = QuotaAlertConfig()
+        precondition(alertCfg.defaultRemainingThresholdPercent == 10)
+        alertCfg.setProviderThreshold(25, providerID: "antigravity")
+        alertCfg.setAccountThreshold(15, providerID: "antigravity", user: "a@gmail.com")
+        precondition(alertCfg.effectiveThreshold(providerID: "antigravity", user: "a@gmail.com") == 15)
+        precondition(alertCfg.effectiveThreshold(providerID: "antigravity", user: "b@gmail.com") == 25)
+        precondition(alertCfg.effectiveThreshold(providerID: "codex", user: "c@gmail.com") == 10)
+        alertCfg.setMuted(true, providerID: "codex", user: "muted@gmail.com")
+        precondition(alertCfg.isMuted(providerID: "codex", user: "muted@gmail.com"))
+
+        let alertProviders = try decode([RemoteProvider].self, #"[{"id":"antigravity","name":"Antigravity","routing":"order","account":{"agent":"antigravity","user":"a@gmail.com","logins":[{"agent":"antigravity","user":"a@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"b@gmail.com","active":false,"on":true}]},"accountRests":{"a@gmail.com":[{"why":"rate","status":429,"key":"antigravity#a@gmail.com"}]}}]"#)
+        let alertLoginUsage = try decode([String: [String: RemoteLoginQuota]].self, #"{"antigravity":{"a@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"antigravity-color","user":"a@gmail.com","windows":[{"name":"Gemini 2.5 Flash","used":92.0,"resetsAt":"2026-11-18T12:00:00Z"},{"name":"Gemini 3 Flash","used":92.0,"resetsAt":"2026-11-18T12:00:00Z"},{"name":"5 hours","used":92.0,"capId":"5h","resetsAt":"2026-11-18T12:00:00Z"},{"name":"Unlimited Extra","used":99.0,"unlimited":true}]},"b@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"antigravity-color","user":"b@gmail.com","windows":[{"name":"5 hours","used":15.0,"capId":"5h"}]}}}"#)
+
+        let evaluatedAlerts = QuotaAlertEvaluator.evaluate(
+            providers: alertProviders,
+            quotas: [],
+            loginUsageByAgent: alertLoginUsage,
+            config: alertCfg
+        )
+        // Multiple model windows on a@gmail.com aggregate into 1 representative alert ("5 hours", 3 low windows), unlimited ignored
+        precondition(evaluatedAlerts.count == 1, "Expected 1 aggregated alert, got \(evaluatedAlerts.count)")
+        precondition(evaluatedAlerts[0].accountUser == "a@gmail.com")
+        precondition(evaluatedAlerts[0].windowName == "5 hours" && evaluatedAlerts[0].affectedWindowCount == 3)
+        precondition(abs(evaluatedAlerts[0].remainingPercent - 8.0) < 0.01)
+        precondition(evaluatedAlerts[0].recommendedSwitchUser == "b@gmail.com")
+
+        let providerSummaries = QuotaAlertEvaluator.summarizeByProvider(items: evaluatedAlerts, providers: alertProviders, config: alertCfg)
+        precondition(providerSummaries.count == 1 && providerSummaries[0].alertingAccountCount == 1)
+
+        // Notification deduplication & hysteresis recovery
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        let dRes1 = QuotaNotificationDeduplicator.filterItemsToNotify(items: evaluatedAlerts, history: [:], now: t0, cooldownMinutes: 240)
+        precondition(dRes1.toNotify.count == 1)
+        let dRes2 = QuotaNotificationDeduplicator.filterItemsToNotify(items: evaluatedAlerts, history: dRes1.updatedHistory, now: t0.addingTimeInterval(600), cooldownMinutes: 240)
+        precondition(dRes2.toNotify.isEmpty, "Same reset cycle within cooldown must deduplicate")
+        let dResRecovered = QuotaNotificationDeduplicator.filterItemsToNotify(items: [], history: dRes2.updatedHistory, now: t0.addingTimeInterval(1200), cooldownMinutes: 240)
+        precondition(dResRecovered.updatedHistory.isEmpty, "Resolved alerts must clear dedup history")
+
+        // Phase 3: AccountSwitchPlanner (subscription & multi-key)
+        let switchProviders = try decode([RemoteProvider].self, #"[{"id":"antigravity","name":"Antigravity","routing":"order","account":{"agent":"antigravity","user":"cool@gmail.com","logins":[{"agent":"antigravity","user":"cool@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"lapsed@gmail.com","active":false,"on":true,"lapsed":"expired"},{"agent":"antigravity","user":"low@gmail.com","active":false,"on":true},{"agent":"antigravity","user":"best@gmail.com","active":false,"on":true}]},"accountRests":{"cool@gmail.com":[{"why":"rate","status":429}]}},{"id":"custom","name":"Custom KeyPool","keyList":[{"id":"k1","name":"Primary","masked":"sk-1","active":true,"on":true,"rest":{"why":"rate","status":429}},{"id":"k2","name":"Disabled","masked":"sk-2","active":false,"on":false},{"id":"k3","name":"HealthyBackup","masked":"sk-3","active":false,"on":true,"weight":2}]}]"#)
+        let switchUsage = try decode([String: [String: RemoteLoginQuota]].self, #"{"antigravity":{"low@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"","user":"low@gmail.com","windows":[{"name":"5h","used":85.0}]},"best@gmail.com":{"provider":"antigravity","name":"Antigravity","icon":"","user":"best@gmail.com","windows":[{"name":"5h","used":12.0}]}}}"#)
+        let subPlan = AccountSwitchPlanner.plan(for: switchProviders[0], sourceAccountOrKeyID: "cool@gmail.com", loginUsageByAgent: switchUsage)!
+        precondition(subPlan.recommended?.id == "best@gmail.com", "Best remaining quota candidate must be recommended first")
+        precondition(subPlan.candidates.count == 2 && subPlan.unavailableReasons.count == 1)
+
+        let keyPlan = AccountSwitchPlanner.plan(for: switchProviders[1], sourceAccountOrKeyID: "k1")!
+        precondition(keyPlan.recommended?.id == "k3" && keyPlan.unavailableReasons.count == 1)
+
+        // Phase 3: Privacy masking, DeepLink parsing, Widget Snapshot
+        precondition(WidgetPrivacyMasker.maskAccountLabel("xiaomosheng66666@gmail.com") == "xi***66@gmail.com")
+        precondition(WidgetPrivacyMasker.maskAccountLabel("ab@x.com") == "a***@x.com")
+        precondition(WidgetPrivacyMasker.maskAccountLabel("sk-1234567890abcdef") == "sk-1···cdef")
+        precondition(WidgetPrivacyMasker.sanitizeServerTitle(name: nil, baseURL: "https://magpie.163ll.com:3430/?k=secret123") == "magpie.163ll.com:3430")
+
+        precondition(MagpieDeepLink.parse(URL(string: "magpie://usage")!) == .usage)
+        precondition(MagpieDeepLink.parse(URL(string: "magpie://alerts")!) == .alerts)
+        precondition(MagpieDeepLink.parse(URL(string: "magpie://refresh")!) == .refresh)
+        precondition(MagpieDeepLink.parse(URL(string: "magpie://providers?id=antigravity&account=xi***66@gmail.com")!) == .providers(providerID: "antigravity", accountHint: "xi***66@gmail.com"))
+
+        let sampleUsage = try decode(RemoteUsageResponse.self, #"{"calls":88,"errors":1,"input":1000,"output":500,"cost":1.25,"bucket":"hour"}"#)
+        let snap = MagpieWidgetSnapshotStore.buildSnapshot(
+            isConfigured: true,
+            isConnected: true,
+            serverName: "生产网关",
+            serverBaseURL: "https://magpie.163ll.com/?k=DO_NOT_LEAK",
+            todayUsage: sampleUsage,
+            providers: alertProviders,
+            quotas: [],
+            loginUsageByAgent: alertLoginUsage,
+            alerts: evaluatedAlerts,
+            alertThresholdPercent: 10,
+            now: t0
+        )
+        let snapData = try JSONEncoder().encode(snap)
+        let snapJSON = String(data: snapData, encoding: .utf8)!
+        precondition(!snapJSON.contains("DO_NOT_LEAK"), "Widget snapshot must never contain webKey")
+        precondition(!snapJSON.contains("a@gmail.com"), "Widget snapshot must mask raw email addresses")
+        precondition(snap.alertCount == 1 && snap.todayCalls == 88 && !snap.isStale(relativeTo: t0.addingTimeInterval(600)))
+        precondition(snap.isStale(relativeTo: t0.addingTimeInterval(9000)))
+
+        print("PASS: Phase 3 quota alerts, notification dedup, quick-switch planner & widget snapshot contracts")
         print("PASS: Phase 2 error aggregation & custom usage date range contracts")
         print("PASS: OAuth callback normalization, http-only + port/path preflight & real 400 mapping")
         print("PASS: OAuth sign-in, 19+ platform catalog, plugin prompts, multi-account logins & usage")

@@ -14,6 +14,29 @@ settings:
     CODE_SIGNING_REQUIRED: "NO"
 
 targets:
+  MagpieWidget:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: MagpieWidget
+        excludes:
+          - "Info.plist"
+          - "MagpieWidget.entitlements"
+      - path: Magpie/Core/MagpieWebModels.swift
+      - path: Magpie/Core/QuotaAlertEngine.swift
+      - path: Magpie/Core/AccountSwitchPlanner.swift
+      - path: Magpie/Core/SharedWidgetSnapshot.swift
+    settings:
+      base:
+        PRODUCT_NAME: MagpieWidget
+        PRODUCT_BUNDLE_IDENTIFIER: ai.usemagpie.ios.widget
+        INFOPLIST_FILE: MagpieWidget/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MagpieWidget/MagpieWidget.entitlements
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        SKIP_INSTALL: "YES"
+        SUPPORTS_MACCATALYST: "NO"
+
   Magpie:
     type: application
     platform: iOS
@@ -23,6 +46,9 @@ targets:
         excludes:
           - "Info.plist"
           - "Entitlements.plist"
+    dependencies:
+      - target: MagpieWidget
+        embed: true
     settings:
       base:
         PRODUCT_NAME: Magpie
@@ -37,3 +63,4 @@ targets:
         build:
           targets:
             Magpie: all
+            MagpieWidget: all
