@@ -477,14 +477,19 @@ final class MagpieScreenshotTests: XCTestCase {
             let unrestDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["解除冷却"])
             XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
         }
-        for _ in 0..<5 where !app.staticTexts["demo1@gmail.com"].isHittable { scroller.swipeDown() }
-        XCTAssertTrue(app.staticTexts["demo1@gmail.com"].isHittable)
-        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].isHittable)
-        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].isHittable)
+        func accountVisible(_ email: String) -> Bool {
+            scroller.staticTexts.matching(identifier: email).allElementsBoundByIndex.contains {
+                $0.exists && $0.isHittable
+            }
+        }
+        for _ in 0..<5 where !accountVisible("demo1@gmail.com") { scroller.swipeDown() }
+        XCTAssertTrue(accountVisible("demo1@gmail.com"))
+        XCTAssertTrue(accountVisible("demo2@gmail.com"))
+        XCTAssertTrue(accountVisible("demo3@gmail.com"))
         shot("28-subscription-multi-account-demo")
 
         // Verify removing 4th account via alert confirmation
-        let removeButtons = app.buttons.matching(identifier: "移除")
+        let removeButtons = scroller.buttons.matching(identifier: "移除")
         XCTAssertGreaterThanOrEqual(removeButtons.count, 4)
         let fourthRemove = removeButtons.element(boundBy: 3)
         for _ in 0..<4 where !fourthRemove.isHittable { scroller.swipeUp() }
@@ -492,7 +497,10 @@ final class MagpieScreenshotTests: XCTestCase {
         let alertRemove = app.alerts.buttons["移除"]
         XCTAssertTrue(alertRemove.waitForExistence(timeout: 5))
         alertRemove.tap()
-        let removedDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["demo4@gmail.com"])
+        let removedDone = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 0"),
+            object: scroller.staticTexts.matching(identifier: "demo4@gmail.com")
+        )
         XCTAssertEqual(XCTWaiter.wait(for: [removedDone], timeout: 10), .completed)
 
         tap("关闭", app: app)
