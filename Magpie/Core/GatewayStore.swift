@@ -64,6 +64,8 @@ final class GatewayStore: ObservableObject {
     @Published var pendingDeepLink: MagpieDeepLink?
 
     // MARK: - Phase 3: Quota Alerts, Quick Switch & Widget Snapshot
+    var lastWidgetDataRefresh: Date?
+    var todayUsageFetchedAt: Date?
     @Published var todayUsageSummary: RemoteUsageResponse?
     @Published var alertConfig: QuotaAlertConfig = QuotaAlertConfig()
     @Published var quotaAlerts: [QuotaAlertItem] = []
@@ -273,6 +275,8 @@ final class GatewayStore: ObservableObject {
         historyRoutes = []
         usageSummary = nil
         todayUsageSummary = nil
+        todayUsageFetchedAt = nil
+        lastWidgetDataRefresh = nil
         usageError = nil
         pendingAccountJump = nil
         quotas = []
@@ -669,6 +673,7 @@ final class GatewayStore: ObservableObject {
             usageSummary = fetched
             if usagePeriod == "today" {
                 todayUsageSummary = fetched
+                todayUsageFetchedAt = Date()
             }
             recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
         } catch {
@@ -694,6 +699,7 @@ final class GatewayStore: ObservableObject {
         do {
             let res = try await client.fetchQuotas(asked: asked, all: all)
             quotas = res.quotas
+            lastWidgetDataRefresh = Date()
             isLoadingQuotas = false
             recomputeAlertsAndWidgetSnapshot(triggerNotifications: !res.isReading)
             if res.isReading {

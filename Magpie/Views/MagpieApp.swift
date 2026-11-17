@@ -29,6 +29,7 @@ enum MagpieTab: String, CaseIterable, Identifiable {
 
 @main
 struct MagpieApp: App {
+    @UIApplicationDelegateAdaptor(MagpieAppDelegate.self) private var appDelegate
     @StateObject private var store = GatewayStore()
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("magpie.appearance") private var appearancePreference: String = "system"
@@ -53,7 +54,7 @@ struct MagpieApp: App {
                     store.handleDeepLink(url)
                 }
                 .onAppear {
-                    MagpieBackgroundRefresh.register {
+                    MagpieBackgroundRefresh.handler = {
                         await store.performBackgroundQuotaRefresh()
                     }
                 }

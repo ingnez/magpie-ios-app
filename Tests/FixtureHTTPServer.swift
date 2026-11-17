@@ -12,9 +12,23 @@ final class FixtureHTTPServer {
     private var responses: [String: Any]
     var port: UInt16 { listener.port!.rawValue }
 
-    init() throws {
+    init(phase3: Bool = false) throws {
         let file = Bundle(for: FixtureHTTPServer.self).url(forResource: "mock-responses", withExtension: "json")!
         responses = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+        if phase3, var state = responses["/api/providers"] as? [String: Any], var providers = state["providers"] as? [[String: Any]] {
+            for i in providers.indices where providers[i]["id"] as? String == "antigravity" {
+                var account = providers[i]["account"] as! [String: Any]
+                var logins = account["logins"] as! [[String: Any]]
+                logins.append(["agent": "antigravity", "user": "backup@example.com", "on": true, "active": false])
+                account["logins"] = logins
+                providers[i]["account"] = account
+            }
+            state["providers"] = providers
+            responses["/api/providers"] = state
+            var usage = responses["/api/login/usage"] as! [String: Any]
+            usage["backup@example.com"] = ["provider": "antigravity", "user": "backup@example.com", "windows": [["name": "5 hours", "used": 5.0]]]
+            responses["/api/login/usage"] = usage
+        }
         listener = try NWListener(using: .tcp, on: .any)
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { state in
@@ -155,6 +169,11 @@ final class FixtureHTTPServer {
                         }
                         for l in logins where !nextLogins.contains(where: { ($0["user"] as? String) == (l["user"] as? String) }) {
                             nextLogins.append(l)
+                        }
+                        nextLogins = nextLogins.map { row in
+                            var row = row
+                            row["active"] = row["user"] as? String == nextLogins.first?["user"] as? String
+                            return row
                         }
                         acc["logins"] = nextLogins
                         if let firstUser = nextLogins.first?["user"] as? String { acc["user"] = firstUser }

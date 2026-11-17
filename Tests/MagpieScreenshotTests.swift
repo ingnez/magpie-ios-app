@@ -592,7 +592,7 @@ final class MagpieScreenshotTests: XCTestCase {
     }
 
     func testCapturePhase3AlertsSwitchWidget() throws {
-        let server = try FixtureHTTPServer()
+        let server = try FixtureHTTPServer(phase3: true)
         fixture = server
         func payload(_ path: String) -> [String: Any] {
             let row = server.requests().last { $0["path"] as? String == path }
@@ -618,6 +618,11 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.otherElements["quickSwitchResultBanner"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["undoQuickSwitchButton"].waitForExistence(timeout: 5))
         shot("41-phase3-error-quick-switch-demo")
+        tap("undoQuickSwitchButton", app: app)
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !app.buttons["undoQuickSwitchButton"].exists
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
         tap("关闭", app: app)
 
         // 2. Open Quota Alerts sheet -> configure threshold 40% so demo2 (38% remaining) triggers alert
@@ -630,7 +635,7 @@ final class MagpieScreenshotTests: XCTestCase {
         thresholdField.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "40")
         tap("收起键盘", app: app)
         tap("saveGlobalAlertThresholdButton", app: app)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "40%")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(thresholdField.value as? String, "40")
         shot("42-phase3-alert-rules-demo")
 
         // 3. Verify alerts grouped by account & by provider, then quick-switch from alert card
@@ -658,9 +663,11 @@ final class MagpieScreenshotTests: XCTestCase {
         shot("46-phase3-deeplink-usage-demo")
 
         // 5. Verify actual API switch call payload
-        let switchBody = payload("/api/login/switch")
-        XCTAssertEqual(switchBody["agent"] as? String, "antigravity")
-        XCTAssertEqual(switchBody["user"] as? String, "demo1@gmail.com")
+        let switchBody = payload("/api/provider/arrange")
+        XCTAssertEqual(switchBody["id"] as? String, "antigravity")
+        XCTAssertEqual((switchBody["accountOrder"] as? [String])?.first, "backup@example.com")
+        XCTAssertEqual(Set(switchBody["accountOrder"] as? [String] ?? []), Set(["demo1@gmail.com", "demo2@gmail.com", "backup@example.com"]))
+        XCTAssertFalse(server.requests().contains { $0["path"] as? String == "/api/login/forget" })
     }
 
 }

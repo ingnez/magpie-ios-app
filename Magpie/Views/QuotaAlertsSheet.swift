@@ -254,10 +254,10 @@ struct QuotaAlertsSheet: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(StatusPalette.ok)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("暂无触发余量预警的账号")
+                                Text("已读取的数据暂无余量预警")
                                     .font(Typography.rowTitle)
                                     .foregroundColor(MagpieTheme.ink)
-                                Text("当前已拉取账号的剩余额度均高于设定阈值（默认 \(store.alertConfig.defaultRemainingThresholdPercent)%）。")
+                                Text("未获取额度的账号不参与判断；已读取数据未触及设定阈值（默认 \(store.alertConfig.defaultRemainingThresholdPercent)%）。")
                                     .font(Typography.caption)
                                     .foregroundColor(MagpieTheme.textSecondary)
                             }
@@ -383,7 +383,7 @@ struct QuotaAlertsSheet: View {
                         .font(Typography.bodySmallMedium)
                         .foregroundColor(StatusPalette.warn)
                 } else {
-                    Text("所有已测账号余量高于 \(summary.effectiveThresholdPercent)%")
+                    Text("未发现低于 \(summary.effectiveThresholdPercent)%")
                         .font(Typography.bodySmall)
                         .foregroundColor(StatusPalette.ok)
                 }
@@ -509,7 +509,7 @@ struct QuotaAlertsSheet: View {
                         Text("触发系统本地通知")
                             .font(Typography.rowTitle)
                             .foregroundColor(MagpieTheme.ink)
-                        Text("开启时向 iOS 请求通知授权；同一重置周期内默认每 4 小时最多提醒一次，额度恢复 5% 以上自动重置去重")
+                        Text("开启时向 iOS 请求通知授权；同一重置周期内默认每 4 小时最多提醒一次，余量高于阈值后重新允许提醒")
                             .font(Typography.caption)
                             .foregroundColor(MagpieTheme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -551,7 +551,7 @@ struct QuotaAlertsSheet: View {
                         .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("• 服务端实时推送依赖：如需 24 小时稳定锁屏提醒，须由 Magpie 服务端主动触发推送。服务端已内置 Bark 推送（当前\(store.remoteSettings.barkKeySet ? "已配置 Key" : "未配置 Key")，服务端用量告警阈值 \(store.remoteSettings.usageAlert)%），也可在后续版本扩展服务端 APNs 推送网关。")
+                    Text("• 服务端实时推送依赖：如需 24 小时稳定锁屏提醒，须由 Magpie 服务端主动触发推送。可通过支持 Bark 的 Magpie 服务端与 Bark 客户端配置推送（当前读取状态：\(store.remoteSettings.barkKeySet ? "已配置 Key" : "未配置 Key")，服务端用量告警阈值 \(store.remoteSettings.usageAlert)%），也可在后续版本扩展服务端 APNs 推送网关。")
                         .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

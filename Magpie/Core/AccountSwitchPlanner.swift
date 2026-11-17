@@ -143,6 +143,15 @@ enum AccountSwitchPlanner {
             )
             let numericWindows = windows.filter { !$0.unlimited && !$0.text }
             let lowestRemaining = numericWindows.map { max(0, min(100, 100.0 - $0.used)) }.min()
+            if let remaining = lowestRemaining, remaining <= 0 {
+                unavailableReasons.append("\(display)：至少一个额度窗口已耗尽")
+                continue
+            }
+            if let q = usageMap.first(where: { $0.key.caseInsensitiveCompare(login.user) == .orderedSame })?.value,
+               q.held || q.pluginError || !(q.error ?? "").isEmpty {
+                unavailableReasons.append("\(display)：额度状态异常，请刷新核查")
+                continue
+            }
             let summary = summarizeWindows(numericWindows, allWindows: windows)
             let isReserve = reserveSet.contains(lower)
 
@@ -205,6 +214,10 @@ enum AccountSwitchPlanner {
                 continue
             }
 
+            if item.spend?.held == true || (item.balance?.left.map { $0 <= 0 } ?? false) {
+                unavailableReasons.append("\(label)：预算或余额已耗尽")
+                continue
+            }
             var remainingPct: Double?
             var summary = "可用 · 权重 \(max(1, item.weight ?? 1))"
             if let bal = item.balance, let left = bal.left {

@@ -1,6 +1,7 @@
 import Foundation
 import UserNotifications
 import BackgroundTasks
+import UIKit
 #if canImport(WidgetKit)
 import WidgetKit
 #endif
@@ -31,6 +32,7 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
 
     var onSelectDeepLink: ((URL) -> Void)?
 
+    private var isProcessing = false
     private let dedupKey = "magpie.quota.notification.history.v1"
 
     private override init() {
@@ -74,7 +76,9 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
         serverID: UUID?,
         config: QuotaAlertConfig
     ) async -> Int {
-        guard config.enabled && config.notificationsEnabled else { return 0 }
+        guard config.enabled && config.notificationsEnabled && !isProcessing else { return 0 }
+        isProcessing = true
+        defer { isProcessing = false }
         let state = await currentAuthState()
         guard state == .authorized || state == .provisional else { return 0 }
 
@@ -85,9 +89,12 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
             now: Date(),
             cooldownMinutes: config.cooldownMinutes
         )
-        saveHistory(result.updatedHistory, for: serverID)
+        var deliveredHistory = history
 
-        guard !result.toNotify.isEmpty else { return 0 }
+        guard !result.toNotify.isEmpty else {
+            saveHistory(result.updatedHistory, for: serverID)
+            return 0
+        }
 
         let center = UNUserNotificationCenter.current()
         var delivered = 0
@@ -95,9 +102,9 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
             let content = UNMutableNotificationContent()
             let remainingStr = String(format: "%.0f%%", item.remainingPercent)
             content.title = "Magpie 余量\(item.severity.title)：\(item.providerName)"
-            var body = "\(item.accountDisplayName) · \(item.windowName) 剩余 \(remainingStr)（阈值 \(item.thresholdPercent)%）"
+            var body = "\(WidgetPrivacyMasker.maskAccountLabel(item.accountUser ?? item.accountDisplayName)) · \(item.windowName) 剩余 \(remainingStr)（阈值 \(item.thresholdPercent)%）"
             if let rec = item.recommendedSwitchDisplay {
-                body += "，可一键切至「\(rec)」"
+                body += "，可一键切至「\(WidgetPrivacyMasker.maskAccountLabel(rec))」"
             }
             content.body = body
             content.sound = .default
@@ -105,17 +112,21 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
             content.userInfo = ["deepLink": targetURL]
 
             let req = UNNotificationRequest(
-                identifier: "magpie.quota.\(item.id.hashValue)",
+                identifier: "magpie.quota.\(Data(item.id.utf8).base64EncodedString())",
                 content: content,
                 trigger: nil
             )
             do {
                 try await center.add(req)
                 delivered += 1
+                deliveredHistory[item.id] = result.updatedHistory[item.id]
             } catch {
                 // Best effort; ignore single scheduling error
             }
         }
+        let active = Set(items.map(\.id))
+        deliveredHistory = deliveredHistory.filter { active.contains($0.key) }
+        saveHistory(deliveredHistory, for: serverID)
         return delivered
     }
 
@@ -202,8 +213,9 @@ final class QuotaNotificationManager: NSObject, UNUserNotificationCenterDelegate
 
 enum MagpieBackgroundRefresh {
     private static var isRegistered = false
+    static var handler: (() async -> Bool)?
 
-    static func register(handler: @escaping () async -> Bool) {
+    static func register() {
         guard !isRegistered else { return }
         isRegistered = true
         BGTaskScheduler.shared.register(
@@ -216,7 +228,7 @@ enum MagpieBackgroundRefresh {
             }
             scheduleNext()
             let workTask = Task {
-                let ok = await handler()
+                let ok = await handler?() ?? false
                 appRefreshTask.setTaskCompleted(success: ok)
             }
             appRefreshTask.expirationHandler = {
@@ -229,5 +241,12 @@ enum MagpieBackgroundRefresh {
         let request = BGAppRefreshTaskRequest(identifier: MagpieBackgroundConstants.refreshTaskIdentifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         try? BGTaskScheduler.shared.submit(request)
+    }
+}
+
+final class MagpieAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        MagpieBackgroundRefresh.register()
+        return true
     }
 }

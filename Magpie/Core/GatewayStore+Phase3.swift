@@ -94,10 +94,11 @@ extension GatewayStore {
         quotaAlerts = evaluated
 
         let todayUsage: RemoteUsageResponse? = {
+            guard let fetchedAt = todayUsageFetchedAt, Calendar.current.isDateInToday(fetchedAt) else { return nil }
             if usagePeriod == "today", let u = usageSummary {
                 return u
             }
-            return todayUsageSummary ?? usageSummary
+            return todayUsageSummary
         }()
 
         let snapshot = MagpieWidgetSnapshotStore.buildSnapshot(
@@ -111,7 +112,7 @@ extension GatewayStore {
             loginUsageByAgent: loginUsageByAgent,
             alerts: evaluated,
             alertThresholdPercent: alertConfig.defaultRemainingThresholdPercent,
-            now: Date()
+            now: lastWidgetDataRefresh ?? todayUsageFetchedAt ?? Date(timeIntervalSince1970: 0)
         )
         widgetSnapshot = snapshot
         MagpieWidgetSnapshotStore.save(snapshot)
@@ -151,6 +152,7 @@ extension GatewayStore {
         }
         if let today = try? await client.fetchUsage(period: "today") {
             todayUsageSummary = today
+            todayUsageFetchedAt = Date()
             recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
         }
     }
@@ -167,199 +169,133 @@ extension GatewayStore {
     }
 
     func executeQuickSwitch(provider: RemoteProvider, targetID: String, sourceID: String? = nil) async -> QuickSwitchResult {
+        guard !isSwitchingAccount else {
+            return failedSwitch(provider: provider, target: targetID, message: "已有切号操作正在进行，请稍候")
+        }
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
-
-        if let account = provider.account, !account.logins.isEmpty {
-            let agent = account.agent ?? provider.id
-            let logins = account.logins
-            let previousOrder = logins.map(\.user)
-            let resolvedFrom = sourceID
-                ?? logins.first(where: { $0.active })?.user
-                ?? account.user
-                ?? previousOrder.first
-            let fromDisplay = resolvedFrom.map { AccountSwitchPlanner.displayName(for: $0, in: provider) } ?? "当前账号"
-            let toDisplay = AccountSwitchPlanner.displayName(for: targetID, in: provider)
-
-            var executed: [String] = []
-            var arranged = false
-
-            do {
-                if previousOrder.first?.caseInsensitiveCompare(targetID) != .orderedSame {
-                    var nextOrder = previousOrder.filter { $0.caseInsensitiveCompare(targetID) != .orderedSame }
-                    nextOrder.insert(targetID, at: 0)
-                    let arrangedResp = try await client.arrangeProviderAccounts(id: provider.id, accountOrder: nextOrder)
-                    applyProvidersResponse(arrangedResp)
-                    executed.append("POST /api/provider/arrange")
-                    arranged = true
-                }
-
-                let switchedResp = try await client.loginAction("switch", agent: agent, user: targetID)
-                applyProvidersResponse(switchedResp)
-                executed.append("POST /api/login/switch")
-
-                await fetchLoginUsage(agent: agent)
-                await refreshStateOnly()
-                await refreshQuotas(asked: false, all: false)
-                recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
-
-                let res = QuickSwitchResult(
-                    id: UUID(),
-                    succeeded: true,
-                    providerID: provider.id,
-                    providerName: provider.name,
-                    agent: agent,
-                    kind: .subscription,
-                    fromID: resolvedFrom,
-                    fromDisplay: fromDisplay,
-                    toID: targetID,
-                    toDisplay: toDisplay,
-                    executedEndpoints: executed,
-                    rolledBack: false,
-                    message: "已切至「\(toDisplay)」（已置顶为顺位 #1 并切换当前活跃账号，原账号已保留未覆盖）",
-                    previousOrder: previousOrder,
-                    timestamp: Date()
-                )
-                lastQuickSwitchResult = res
-                showToast("已切换至「\(toDisplay)」")
-                return res
-            } catch {
-                var rolledBack = false
-                if arranged {
-                    if let rollbackResp = try? await client.arrangeProviderAccounts(id: provider.id, accountOrder: previousOrder) {
-                        applyProvidersResponse(rollbackResp)
-                        rolledBack = true
+        let serverID = activeServerID
+        var before: RemoteProvider = provider
+        var endpoints: [String] = []
+        var attemptedMutation = false
+        do {
+            let latest = try await client.fetchProviders()
+            guard serverID == activeServerID,
+                  let fresh = latest.providers.first(where: { $0.id == provider.id }) else {
+                throw MagpieWebError.decodingError("实例或账号池已改变，请重新打开号池")
+            }
+            before = fresh
+            applyProvidersResponse(latest)
+            let origin = fresh.account?.logins.first(where: \.active)?.user ?? fresh.account?.user ?? fresh.keyList.first(where: \.active)?.id
+            guard !fresh.off,
+                  let plan = quickSwitchPlan(for: fresh, sourceID: origin),
+                  plan.candidates.contains(where: { $0.id.caseInsensitiveCompare(targetID) == .orderedSame }) else {
+                throw MagpieWebError.decodingError("目标账号已不可用或已是当前账号，请刷新后重选")
+            }
+            let order = fresh.account?.logins.map(\.user)
+            attemptedMutation = true
+            if let order = order {
+                let next = [targetID] + order.filter { $0.caseInsensitiveCompare(targetID) != .orderedSame }
+                endpoints.append("POST /api/provider/arrange")
+                _ = try await client.arrangeProviderAccounts(id: fresh.id, accountOrder: next)
+            } else {
+                endpoints.append("POST /api/keys/use")
+                _ = try await client.useProviderKey(id: fresh.id, ref: targetID)
+            }
+            // A successful HTTP status alone is not proof the selection changed.
+            let checked = try await client.fetchProviders()
+            guard serverID == activeServerID, let selected = checked.providers.first(where: { $0.id == fresh.id }),
+                  switchSelectionMatches(selected, targetID: targetID, original: fresh) else {
+                throw MagpieWebError.decodingError("服务端尚未确认目标账号已置顶，正在核查并恢复")
+            }
+            applyProvidersResponse(checked)
+            let result = QuickSwitchResult(
+                id: UUID(), succeeded: true, providerID: fresh.id, providerName: fresh.name,
+                agent: fresh.account?.agent, kind: plan.kind, fromID: origin,
+                fromDisplay: origin.map { AccountSwitchPlanner.displayName(for: $0, in: fresh) } ?? "原账号",
+                toID: targetID, toDisplay: plan.candidates.first(where: { $0.id == targetID })?.displayName ?? targetID,
+                executedEndpoints: endpoints, rolledBack: false,
+                message: "服务端已确认目标账号优先顺序，账号池完整保留。实际请求仍受当前调度策略与模型可用范围约束。",
+                previousOrder: order, timestamp: Date())
+            lastQuickSwitchResult = result
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
+            showToast("已确认切至「\(result.toDisplay)」")
+            return result
+        } catch {
+            let reason = error.localizedDescription
+            var recovered = false
+            if attemptedMutation && serverID == activeServerID {
+                // A timeout is an unknown outcome: inspect current state before any recovery write.
+                if let state = try? await client.fetchProviders(), let current = state.providers.first(where: { $0.id == before.id }) {
+                    let originalIDs = Set(before.account?.logins.map(\.user) ?? before.keyList.map(\.id))
+                    let currentIDs = Set(current.account?.logins.map(\.user) ?? current.keyList.map(\.id))
+                    if originalIDs == currentIDs {
+                        if let order = before.account?.logins.map(\.user) {
+                            _ = try? await client.arrangeProviderAccounts(id: before.id, accountOrder: order)
+                        } else if let old = before.keyList.first(where: \.active)?.id {
+                            _ = try? await client.useProviderKey(id: before.id, ref: old)
+                        }
+                        if let verified = try? await client.fetchProviders(), let restored = verified.providers.first(where: { $0.id == before.id }) {
+                            recovered = (restored.account?.logins.map(\.user) == before.account?.logins.map(\.user))
+                                && restored.keyList.first(where: \.active)?.id == before.keyList.first(where: \.active)?.id
+                            applyProvidersResponse(verified)
+                        }
+                    } else {
+                        applyProvidersResponse(state)
                     }
                 }
-                let errMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                let msg = rolledBack
-                    ? "切号未完成（\(errMsg)），已自动恢复原账号顺序「\(fromDisplay)」，未覆盖任何账号。"
-                    : "切号失败：\(errMsg)。所有已有账号均保留在号池中。"
-                let res = QuickSwitchResult(
-                    id: UUID(),
-                    succeeded: false,
-                    providerID: provider.id,
-                    providerName: provider.name,
-                    agent: agent,
-                    kind: .subscription,
-                    fromID: resolvedFrom,
-                    fromDisplay: fromDisplay,
-                    toID: targetID,
-                    toDisplay: toDisplay,
-                    executedEndpoints: executed,
-                    rolledBack: rolledBack,
-                    message: msg,
-                    previousOrder: previousOrder,
-                    timestamp: Date()
-                )
-                lastQuickSwitchResult = res
-                lastActionError = msg
-                showToast(msg)
-                return res
             }
-        } else {
-            let keys = provider.keyList
-            let resolvedFrom = sourceID ?? keys.first(where: \.active)?.id ?? keys.first?.id
-            let fromKey = keys.first(where: { $0.id == resolvedFrom })
-            let toKey = keys.first(where: { $0.id == targetID })
-            let fromDisplay = (fromKey?.name?.isEmpty == false ? fromKey!.name! : fromKey?.masked) ?? "原 Key"
-            let toDisplay = (toKey?.name?.isEmpty == false ? toKey!.name! : toKey?.masked) ?? targetID
-
-            do {
-                let resp = try await client.useProviderKey(id: provider.id, ref: targetID)
-                applyProvidersResponse(resp)
-                recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
-
-                let res = QuickSwitchResult(
-                    id: UUID(),
-                    succeeded: true,
-                    providerID: provider.id,
-                    providerName: provider.name,
-                    agent: nil,
-                    kind: .apiKey,
-                    fromID: resolvedFrom,
-                    fromDisplay: fromDisplay,
-                    toID: targetID,
-                    toDisplay: toDisplay,
-                    executedEndpoints: ["POST /api/keys/use"],
-                    rolledBack: false,
-                    message: "已将 Key「\(toDisplay)」设为优先使用（原 Key 已保留）",
-                    previousOrder: nil,
-                    timestamp: Date()
-                )
-                lastQuickSwitchResult = res
-                showToast("已切至 Key「\(toDisplay)」")
-                return res
-            } catch {
-                let errMsg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                let res = QuickSwitchResult(
-                    id: UUID(),
-                    succeeded: false,
-                    providerID: provider.id,
-                    providerName: provider.name,
-                    agent: nil,
-                    kind: .apiKey,
-                    fromID: resolvedFrom,
-                    fromDisplay: fromDisplay,
-                    toID: targetID,
-                    toDisplay: toDisplay,
-                    executedEndpoints: [],
-                    rolledBack: false,
-                    message: "切换 Key 失败：\(errMsg)",
-                    previousOrder: nil,
-                    timestamp: Date()
-                )
-                lastQuickSwitchResult = res
-                lastActionError = errMsg
-                showToast(res.message)
-                return res
-            }
+            let suffix = !attemptedMutation ? "未提交切号修改。" : (recovered ? "已读回确认原顺序恢复。" : "结果未确定，请刷新号池核实；未执行删除或凭据覆盖。")
+            var result = failedSwitch(provider: before, target: targetID, message: "切号未完成：\(reason)。\(suffix)", endpoints: endpoints, recovered: recovered)
+            if serverID != activeServerID { result = failedSwitch(provider: before, target: targetID, message: "实例已切换，请回到原实例核查操作结果") }
+            lastQuickSwitchResult = result
+            showToast(result.message)
+            return result
         }
     }
 
-    func undoLastQuickSwitch(_ result: QuickSwitchResult) async -> Bool {
-        guard result.succeeded, let provider = providers.first(where: { $0.id == result.providerID }) else {
-            return false
+    private func switchSelectionMatches(_ selected: RemoteProvider, targetID: String, original: RemoteProvider) -> Bool {
+        if let logins = selected.account?.logins, let old = original.account?.logins {
+            return logins.first?.user.caseInsensitiveCompare(targetID) == .orderedSame && Set(logins.map(\.user)) == Set(old.map(\.user))
         }
+        return selected.keyList.first(where: \.active)?.id == targetID && Set(selected.keyList.map(\.id)) == Set(original.keyList.map(\.id))
+    }
+
+    private func failedSwitch(provider: RemoteProvider, target: String, message: String, endpoints: [String] = [], recovered: Bool = false) -> QuickSwitchResult {
+        QuickSwitchResult(id: UUID(), succeeded: false, providerID: provider.id, providerName: provider.name,
+                          agent: provider.account?.agent, kind: provider.account == nil ? .apiKey : .subscription,
+                          fromID: nil, fromDisplay: "原账号", toID: target, toDisplay: target,
+                          executedEndpoints: endpoints, rolledBack: recovered, message: message, previousOrder: nil, timestamp: Date())
+    }
+
+    func undoLastQuickSwitch(_ result: QuickSwitchResult) async -> Bool {
+        guard !isSwitchingAccount, result.succeeded else { return false }
         isSwitchingAccount = true
         defer { isSwitchingAccount = false }
-
-        switch result.kind {
-        case .subscription:
-            let agent = result.agent ?? provider.id
-            do {
-                if let prevOrder = result.previousOrder, !prevOrder.isEmpty {
-                    let resp = try await client.arrangeProviderAccounts(id: provider.id, accountOrder: prevOrder)
-                    applyProvidersResponse(resp)
+        do {
+            let latest = try await client.fetchProviders()
+            guard let p = latest.providers.first(where: { $0.id == result.providerID }) else { return false }
+            if let order = result.previousOrder {
+                guard Set(order) == Set(p.account?.logins.map(\.user) ?? []), p.account?.logins.first?.user == result.toID else {
+                    throw MagpieWebError.decodingError("账号池已再次改变，撤回已停止，请手动选择账号")
                 }
-                if let prevUser = result.fromID, !prevUser.isEmpty {
-                    let resp = try await client.loginAction("switch", agent: agent, user: prevUser)
-                    applyProvidersResponse(resp)
+                _ = try await client.arrangeProviderAccounts(id: p.id, accountOrder: order)
+            } else if let old = result.fromID {
+                guard p.keyList.first(where: \.active)?.id == result.toID else {
+                    throw MagpieWebError.decodingError("主用 Key 已再次改变，撤回已停止")
                 }
-                await fetchLoginUsage(agent: agent)
-                await refreshStateOnly()
-                recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
-                lastQuickSwitchResult = nil
-                showToast("已恢复切回「\(result.fromDisplay)」")
-                return true
-            } catch {
-                recordActionError(error)
-                return false
+                _ = try await client.useProviderKey(id: p.id, ref: old)
             }
-        case .apiKey:
-            guard let prevKey = result.fromID, !prevKey.isEmpty else { return false }
-            do {
-                let resp = try await client.useProviderKey(id: provider.id, ref: prevKey)
-                applyProvidersResponse(resp)
-                recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
-                lastQuickSwitchResult = nil
-                showToast("已切回原 Key「\(result.fromDisplay)」")
-                return true
-            } catch {
-                recordActionError(error)
-                return false
+            let state = try await client.fetchProviders()
+            guard let p = state.providers.first(where: { $0.id == result.providerID }),
+                  (result.previousOrder.map { $0 == p.account?.logins.map(\.user) } ?? (p.keyList.first(where: \.active)?.id == result.fromID)) else {
+                throw MagpieWebError.decodingError("撤回尚未得到服务端确认，请刷新核查")
             }
-        }
+            applyProvidersResponse(state)
+            lastQuickSwitchResult = nil
+            showToast("已确认恢复原账号顺序")
+            return true
+        } catch { recordActionError(error); return false }
     }
 
     // MARK: - Background Refresh & Deep Link
@@ -374,6 +310,7 @@ extension GatewayStore {
             await refreshQuotas(asked: false, all: false)
             if let today = try? await client.fetchUsage(period: "today") {
                 todayUsageSummary = today
+            todayUsageFetchedAt = Date()
                 if usagePeriod == "today" {
                     usageSummary = today
                 }
