@@ -213,7 +213,7 @@ enum QuotaAlertEvaluator {
                     let user = nonEmpty(q.user)
                     if let user = user, config.isMuted(providerID: provider.id, user: user) { continue }
                     let effectiveThreshold = config.effectiveThreshold(providerID: provider.id, user: user)
-                    let windows = q.windows
+                    let windows = q.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
                     guard let picked = pickRepresentativeLowWindow(from: windows, threshold: effectiveThreshold) else {
                         continue
                     }
@@ -348,7 +348,7 @@ enum QuotaAlertEvaluator {
              || $0.provider.caseInsensitiveCompare(agent) == .orderedSame)
             && ($0.user?.caseInsensitiveCompare(user) == .orderedSame)
         }) {
-            return q.windows
+            return q.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
         }
         return []
     }
@@ -445,5 +445,16 @@ enum QuotaNotificationDeduplicator {
         }
 
         return (toNotify, nextHistory)
+    }
+}
+
+extension RemoteLoginQuotaWindow {
+    init(quotaWindow w: RemoteQuotaWindow) {
+        unlimited = w.unlimited; name = w.name; used = w.used
+        resetsAt = w.resetsAt; resetSecs = w.resetSecs; display = w.display
+        text = w.text; amount = w.amount; limit = w.limit; unit = w.unit
+        lane = nil; balance = nil; spent = nil; family = nil; pool = nil
+        credits = false; extra = false; capped = false; capsSome = false
+        capId = nil; ownCap = false
     }
 }

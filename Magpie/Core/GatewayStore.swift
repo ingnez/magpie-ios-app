@@ -287,7 +287,7 @@ final class GatewayStore: ObservableObject {
         lastActionError = nil
     }
 
-    private func configureClientForActiveServer() async {
+    func configureClientForActiveServer() async {
         if let server = activeServer {
             await client.configure(server: server, webKey: webKey(for: server.id))
         } else {

@@ -265,7 +265,7 @@ enum AccountSwitchPlanner {
              || $0.provider.caseInsensitiveCompare(agent) == .orderedSame)
             && ($0.user?.caseInsensitiveCompare(user) == .orderedSame)
         }) {
-            return q.windows
+            return q.windows.map { RemoteLoginQuotaWindow(quotaWindow: $0) }
         }
         return []
     }

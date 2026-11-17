@@ -24,6 +24,7 @@ targets:
           - "Info.plist"
           - "MagpieWidget.entitlements"
       - path: Magpie/Core/MagpieWebModels.swift
+      - path: Magpie/Core/MagpieOperationModels.swift
       - path: Magpie/Core/QuotaAlertEngine.swift
       - path: Magpie/Core/AccountSwitchPlanner.swift
       - path: Magpie/Core/SharedWidgetSnapshot.swift
