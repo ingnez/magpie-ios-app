@@ -1198,6 +1198,13 @@ struct RemoteGroupRule: Codable, Identifiable, Equatable {
         }
         if let folders = folders, !folders.isEmpty { d["folders"] = folders }
         if let exceptFolders = exceptFolders, !exceptFolders.isEmpty { d["exceptFolders"] = exceptFolders }
+        if let conditions = whereConds {
+            d["where"] = conditions.map { cond -> [String: String] in
+                var item = ["field": cond.field, "op": cond.op]
+                if let value = cond.value { item["value"] = value }
+                return item
+            }
+        }
         if pause { d["pause"] = true }
         return d
     }
@@ -1892,4 +1899,9 @@ struct RemoteCallerKey: Decodable, Identifiable, Equatable {
         allModels = try c.decodeIfPresent(Bool.self, forKey: .allModels) ?? false
         models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
     }
+}
+
+struct RemoteAgentFastResponse: Decodable {
+    let fast: Bool
+    let ultra: Bool
 }

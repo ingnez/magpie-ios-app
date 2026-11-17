@@ -7,6 +7,7 @@ struct DashboardView: View {
 
     @State private var traceMode: TraceDisplayMode = .live
     @State private var selectedRoute: RemoteRoute?
+    @State private var showingAgents = false
 
     enum TraceDisplayMode: String, CaseIterable {
         case live = "实时追踪"
@@ -33,6 +34,8 @@ struct DashboardView: View {
                         Task { await store.connectAndRefreshAll() }
                     }
                 } else {
+                    Button("Agents 与方案") { showingAgents = true }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     gatewayOverviewSection
                     traceSection
                 }
@@ -44,6 +47,7 @@ struct DashboardView: View {
         .refreshable {
             await store.connectAndRefreshAll()
         }
+        .sheet(isPresented: $showingAgents) { AgentsView(store: store) }
         .sheet(item: $selectedRoute) { route in
             RouteDetailSheet(store: store, route: route)
         }

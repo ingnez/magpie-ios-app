@@ -8,6 +8,12 @@ struct ProvidersView: View {
     @State private var testingProviderID: String?
     @State private var testResultsByID: [String: String] = [:]
     @State private var pendingDelete: RemoteProvider?
+    @State private var selectedProvider: RemoteProvider?
+    @State private var editingGroup: RemoteRoutingGroup?
+    @State private var creatingGroup = false
+    @State private var copyingGroup: RemoteRoutingGroup?
+    @State private var copyName = ""
+    @State private var pendingGroupDelete: RemoteRoutingGroup?
 
     enum ProviderSectionTab: String, CaseIterable {
         case providers = "供应商"
@@ -44,9 +50,7 @@ struct ProvidersView: View {
                         .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                         .disabled(store.activeServer == nil)
                     } else {
-                        Button("刷新") {
-                            Task { await store.refreshGroups() }
-                        }
+                        Button("新建") { creatingGroup = true }
                         .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                     }
                 }
@@ -73,6 +77,13 @@ struct ProvidersView: View {
                         }
                     }
                 } else {
+                    HStack {
+                        Text("同名模型自动归组")
+                        Spacer()
+                        MagpieToggle(isOn: Binding(get: { store.autoGroupsFound }, set: { on in
+                            Task { await store.toggleAutoGroups(on) }
+                        }))
+                    }
                     if store.groups.isEmpty {
                         MinimalSection {
                             Text("服务端暂无路由组（group/*）")
@@ -97,6 +108,36 @@ struct ProvidersView: View {
         .sheet(isPresented: $presentingAddSheet) {
             AddProviderSheet(store: store)
         }
+        .sheet(item: $selectedProvider) { provider in
+            ProviderDetailSheet(store: store, providerID: provider.id)
+        }
+        .sheet(item: $editingGroup) { group in
+            GroupEditorSheet(store: store, existing: group)
+        }
+        .sheet(isPresented: $creatingGroup) {
+            GroupEditorSheet(store: store, existing: nil)
+        }
+        .sheet(item: $copyingGroup) { group in
+            NavigationView {
+                Form {
+                    TextField("副本名称", text: $copyName)
+                    Button("创建副本") {
+                        Task {
+                            if await store.copyGroup(group, newName: copyName) { copyingGroup = nil }
+                        }
+                    }.disabled(copyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .navigationTitle("复制路由组")
+                .toolbar { Button("取消") { copyingGroup = nil } }
+            }
+        }
+        .alert("删除路由组？", isPresented: Binding(get: { pendingGroupDelete != nil }, set: { if !$0 { pendingGroupDelete = nil } })) {
+            Button("删除", role: .destructive) {
+                if let group = pendingGroupDelete { Task { await store.deleteGroup(group) } }
+                pendingGroupDelete = nil
+            }
+            Button("取消", role: .cancel) { pendingGroupDelete = nil }
+        } message: { Text("将从服务器移除此路由组。") }
         .alert(
             "删除供应商？",
             isPresented: Binding(
@@ -226,6 +267,8 @@ struct ProvidersView: View {
             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
             HStack(spacing: 8) {
+                Button("管理") { selectedProvider = provider }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                 Button(testingProviderID == provider.id ? "测连中…" : "测连") {
                     testingProviderID = provider.id
                     Task {
@@ -268,7 +311,7 @@ struct ProvidersView: View {
     private func groupCard(_ group: RemoteRoutingGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                MagpieStatusLight(kind: group.off ? .untested : (group.ready ? .connected : .failed))
+                MagpieStatusLight(kind: group.isOff ? .untested : (group.ready ? .connected : .failed))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.name)
                         .font(.system(size: 15.5, weight: .semibold))
@@ -280,7 +323,7 @@ struct ProvidersView: View {
                 Spacer()
                 MagpieToggle(
                     isOn: Binding(
-                        get: { !group.off },
+                        get: { !group.isOff },
                         set: { newVal in
                             Task { await store.switchGroup(group, enabled: newVal) }
                         }
@@ -295,8 +338,8 @@ struct ProvidersView: View {
             }
 
             HStack(spacing: 6) {
-                if let mode = group.mode, !mode.isEmpty {
-                    MagpieTag(text: "策略: \(mode)")
+                if !group.routing.isEmpty {
+                    MagpieTag(text: "策略: \(group.routing)")
                 }
                 MagpieTag(text: "\(group.members.count) 个成员")
                 if let picked = group.picked, !picked.isEmpty {
@@ -304,6 +347,18 @@ struct ProvidersView: View {
                 }
             }
 
+            HStack {
+                if !group.auto {
+                    Button("编辑") { editingGroup = group }
+                        .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                }
+                Button("复制") { copyName = group.name + " 副本"; copyingGroup = group }
+                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                Spacer()
+                if !group.auto {
+                    Button("删除", role: .destructive) { pendingGroupDelete = group }
+                }
+            }
             if !group.members.isEmpty {
                 Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
                 ForEach(group.members, id: \.self) { member in
@@ -314,7 +369,7 @@ struct ProvidersView: View {
                             .foregroundColor(isPicked ? MagpieTheme.ink : MagpieTheme.textSecondary)
                             .lineLimit(1)
                         Spacer()
-                        if (group.mode ?? "").lowercased() == "manual" {
+                        if group.routing.lowercased() == "manual" {
                             Button(isPicked ? "已选中" : "切换") {
                                 Task { await store.pickGroupMember(group, member: member) }
                             }

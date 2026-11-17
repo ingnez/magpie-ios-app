@@ -15,9 +15,16 @@ final class GatewayStore: ObservableObject {
     @Published var remoteState: RemoteStateResponse?
     @Published var remoteSettings: RemoteSettingsState = RemoteSettingsState()
     @Published var providers: [RemoteProvider] = []
+    @Published var presets: [RemotePreset] = []
     @Published var gatewayStatus: RemoteGatewayStatus?
     @Published var groups: [RemoteRoutingGroup] = []
+    @Published var groupModels: [RemoteGroupModelRef] = []
+    @Published var groupDeciders: [RemoteGroupModelRef] = []
+    @Published var groupDrawers: [RemoteGroupModelRef] = []
+    @Published var groupTemplates: [RemoteGroupTemplate] = []
+    @Published var groupDefaults: RemoteGroupDefaults?
     @Published var autoGroupsFound: Bool = false
+    @Published var balanceOutputsByID: [String: String] = [:]
 
     // MARK: - Live Trace & History (`/api/gateway/trace`, `/api/gateway/history`)
     @Published var traceRoutes: [RemoteRoute] = []
@@ -203,8 +210,16 @@ final class GatewayStore: ObservableObject {
         remoteState = nil
         remoteSettings = RemoteSettingsState()
         providers = []
+        presets = []
         gatewayStatus = nil
         groups = []
+        groupModels = []
+        groupDeciders = []
+        groupDrawers = []
+        groupTemplates = []
+        groupDefaults = nil
+        autoGroupsFound = false
+        balanceOutputsByID = [:]
         traceRoutes = []
         traceTotals = RemoteTraceTotals()
         traceSeq = 0
@@ -355,11 +370,40 @@ final class GatewayStore: ObservableObject {
 
     // MARK: - Providers & Groups
 
+    func applyProvidersResponse(_ resp: RemoteProvidersResponse) {
+        providers = resp.providers
+        if !resp.presets.isEmpty {
+            presets = resp.presets
+        }
+        if let gw = resp.gateway {
+            gatewayStatus = gw
+        }
+    }
+
+    func applyGroupsResponse(_ resp: RemoteGroupsResponse) {
+        groups = resp.groups
+        groupModels = resp.models
+        groupDeciders = resp.deciders
+        groupDrawers = resp.drawers
+        groupTemplates = resp.templates
+        if let defs = resp.defaults {
+            groupDefaults = defs
+        }
+        autoGroupsFound = resp.found
+    }
+
+    func applyStateResponse(_ resp: RemoteStateResponse) {
+        remoteState = resp
+        remoteSettings = resp.settings
+        if let notice = resp.notice, !notice.isEmpty {
+            showToast(notice)
+        }
+    }
+
     func refreshProviders() async {
         do {
             let resp = try await client.fetchProviders()
-            providers = resp.providers
-            gatewayStatus = resp.gateway
+            applyProvidersResponse(resp)
         } catch {
             recordActionError(error)
         }
@@ -368,8 +412,7 @@ final class GatewayStore: ObservableObject {
     func toggleProvider(_ provider: RemoteProvider, enabled: Bool) async {
         do {
             let resp = try await client.setProviderEnabled(id: provider.id, enabled: enabled)
-            providers = resp.providers
-            gatewayStatus = resp.gateway
+            applyProvidersResponse(resp)
             showToast(enabled ? "已启用「\(provider.name)」" : "已停用「\(provider.name)」")
         } catch {
             recordActionError(error)
@@ -400,8 +443,13 @@ final class GatewayStore: ObservableObject {
     func refreshProviderModels(_ provider: RemoteProvider) async {
         do {
             let resp = try await client.refreshProviderModels(id: provider.id)
-            providers = resp.providers
-            showToast("已刷新「\(provider.name)」模型列表")
+            if let updated = resp.provider, let idx = providers.firstIndex(where: { $0.id == updated.id }) {
+                providers[idx] = updated
+            } else {
+                await refreshProviders()
+            }
+            await refreshGroups()
+            showToast("「\(provider.name)」已同步 \(resp.count) 个模型")
         } catch {
             recordActionError(error)
         }
@@ -410,8 +458,20 @@ final class GatewayStore: ObservableObject {
     func refreshProviderBalance(_ provider: RemoteProvider) async {
         do {
             let resp = try await client.refreshProviderBalance(id: provider.id)
-            providers = resp.providers
-            showToast("已刷新「\(provider.name)」余额")
+            if resp.ok {
+                let amount = resp.amount ?? "已返回"
+                balanceOutputsByID[provider.id] = "余额：\(amount)"
+                showToast("「\(provider.name)」余额：\(amount)")
+            } else if let err = resp.error, !err.isEmpty {
+                balanceOutputsByID[provider.id] = "查询失败：\(err)"
+                showToast(err)
+            } else if resp.undetected {
+                balanceOutputsByID[provider.id] = "未自动探测到余额接口，可在高级设置填写 Balance URL"
+                showToast("未探测到余额接口")
+            } else {
+                balanceOutputsByID[provider.id] = "暂无余额数据"
+            }
+            await refreshProviders()
         } catch {
             recordActionError(error)
         }
@@ -457,8 +517,7 @@ final class GatewayStore: ObservableObject {
     func refreshGroups() async {
         do {
             let resp = try await client.fetchGroups()
-            groups = resp.groups
-            autoGroupsFound = resp.found
+            applyGroupsResponse(resp)
         } catch {
             recordActionError(error)
         }
@@ -467,7 +526,7 @@ final class GatewayStore: ObservableObject {
     func switchGroup(_ group: RemoteRoutingGroup, enabled: Bool) async {
         do {
             let resp = try await client.switchGroup(id: group.id, on: enabled)
-            groups = resp.groups
+            applyGroupsResponse(resp)
             showToast(enabled ? "已开启路由组「\(group.name)」" : "已停用路由组「\(group.name)」")
         } catch {
             recordActionError(error)
@@ -477,7 +536,7 @@ final class GatewayStore: ObservableObject {
     func pickGroupMember(_ group: RemoteRoutingGroup, member: String) async {
         do {
             let resp = try await client.pickGroupMember(id: group.id, member: member)
-            groups = resp.groups
+            applyGroupsResponse(resp)
             showToast("已切换成员：\(member)")
         } catch {
             recordActionError(error)
@@ -651,7 +710,7 @@ final class GatewayStore: ObservableObject {
 
     // MARK: - Persistence & Helpers
 
-    private func recordActionError(_ error: Error) {
+    func recordActionError(_ error: Error) {
         let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         lastActionError = msg
         showToast(msg)

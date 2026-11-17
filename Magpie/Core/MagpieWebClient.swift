@@ -274,7 +274,7 @@ actor MagpieWebClient {
         return (data, response)
     }
 
-    private func requestJSON<T: Decodable>(
+    func requestJSON<T: Decodable>(
         _ type: T.Type,
         method: String = "GET",
         path: String,
@@ -386,9 +386,9 @@ actor MagpieWebClient {
         ).value.results
     }
 
-    func refreshProviderModels(id: String) async throws -> RemoteProvidersResponse {
+    func refreshProviderModels(id: String) async throws -> RemoteProviderModelsRefreshResponse {
         return try await requestJSON(
-            RemoteProvidersResponse.self,
+            RemoteProviderModelsRefreshResponse.self,
             method: "POST",
             path: "/api/provider/models",
             jsonBody: ["id": id],
@@ -396,9 +396,9 @@ actor MagpieWebClient {
         ).value
     }
 
-    func refreshProviderBalance(id: String) async throws -> RemoteProvidersResponse {
+    func refreshProviderBalance(id: String) async throws -> RemoteProviderBalanceResponse {
         return try await requestJSON(
-            RemoteProvidersResponse.self,
+            RemoteProviderBalanceResponse.self,
             method: "POST",
             path: "/api/provider/balance",
             jsonBody: ["id": id],
