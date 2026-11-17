@@ -8,6 +8,7 @@ final class FixtureHTTPServer {
     private let queue = DispatchQueue(label: "magpie.fixture")
     private let lock = NSLock()
     private var rows: [[String: Any]] = []
+    private var traceRows: [[String: Any]] = []
     private let responses: [String: Any]
     var port: UInt16 { listener.port!.rawValue }
 
@@ -31,6 +32,7 @@ final class FixtureHTTPServer {
     }
     func stop() { listener.cancel() }
     func requests() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return rows }
+    func trace() -> [[String: Any]] { lock.lock(); defer { lock.unlock() }; return traceRows }
 
     private func read(_ connection: NWConnection, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1024 * 1024) { [weak self] data, _, done, error in
@@ -60,6 +62,7 @@ final class FixtureHTTPServer {
     }
     private func answer(_ connection: NWConnection, method: String, url: URLComponents, headers: String, body: Data) {
         let path = url.path
+        lock.lock(); traceRows.append(["method": method, "path": path, "hasSession": headers.contains("magpie_web_fixture=test-session")]); lock.unlock()
         if method == "GET", path == "/api/state", let key = url.queryItems?.first(where: { $0.name == "k" })?.value {
             guard key == "fixture-only-not-a-real-key" else { json(connection, ["error": "wrong fixture key"], status: 401); return }
             send(connection, Data(), status: 303, extra: "Set-Cookie: magpie_web_fixture=test-session; Path=/; HttpOnly; SameSite=Strict\r\nLocation: /api/state\r\n")

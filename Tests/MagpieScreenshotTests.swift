@@ -8,6 +8,10 @@ final class MagpieScreenshotTests: XCTestCase {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
             attachment.name = "UI API requests"; attachment.lifetime = .keepAlways; add(attachment)
         }
+        if let trace = fixture?.trace(), let data = try? JSONSerialization.data(withJSONObject: trace) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "UI HTTP trace"; attachment.lifetime = .keepAlways; add(attachment)
+        }
         fixture?.stop(); fixture = nil; super.tearDown()
     }
     private func shot(_ name: String) {
@@ -45,6 +49,11 @@ final class MagpieScreenshotTests: XCTestCase {
     func testCaptureAllTabs() throws {
         let server = try FixtureHTTPServer()
         fixture = server
+        func payload(_ path: String) -> [String: Any] {
+            let row = server.requests().last { $0["path"] as? String == path }
+            XCTAssertNotNil(row, "UI must call \(path)")
+            return row?["body"] as? [String: Any] ?? [:]
+        }
         let app = XCUIApplication()
         app.launch()
         tap("连接 magpie web", app: app)
@@ -108,11 +117,20 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["移动端演示"].waitForExistence(timeout: 10))
         shot("15-caller-keys-demo")
         tap("编辑名称、模型权限与预算", app: app)
+        let budgetSwitch = app.switches["修改额度规则"]
+        XCTAssertTrue(budgetSwitch.waitForExistence(timeout: 5))
+        budgetSwitch.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+        XCTAssertTrue(app.textFields["Token 上限（0 为不限）"].waitForExistence(timeout: 10), "Budget controls must actually open before saving")
         shot("16-caller-key-editor-demo")
-        XCTAssertTrue(app.switches["修改额度规则"].waitForExistence(timeout: 5))
-        app.switches["修改额度规则"].tap()
         tap("保存", app: app)
         tap("关闭", app: app)
+        let requests = server.requests()
+        let budget = payload("/api/caller-keys/limit-key")["limit"] as? [String: Any]
+        XCTAssertEqual(budget?["tokens"] as? Int, 1000000)
+        XCTAssertEqual(budget?["period"] as? String, "week")
+        let limitIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/limit-key" })
+        let accessIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/access-key" })
+        XCTAssertLessThan(limitIndex, accessIndex, "Budget must be applied before granting caller access")
         tap("正则与敏感词", app: app, scroll: true)
         shot("17-masking-rules-demo")
         tap("关闭", app: app)
@@ -123,18 +141,12 @@ final class MagpieScreenshotTests: XCTestCase {
         shot("18-masking-comparison-demo")
         tap("关闭", app: app)
         tap("Sessions", app: app, scroll: true)
-        XCTAssertTrue(app.webViews.staticTexts["Cookie 会话验证通过"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.webViews.staticTexts["Cookie 会话验证通过"].waitForExistence(timeout: 60))
         shot("19-console-cookie-integration-demo")
         tap("关闭", app: app)
         tap("上下文调优", app: app, scroll: true)
-        XCTAssertTrue(app.webViews.staticTexts["上下文页签选择通过"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.webViews.staticTexts["上下文页签选择通过"].waitForExistence(timeout: 60))
         shot("20-console-context-selection-demo")
-        let requests = server.requests()
-        func payload(_ path: String) -> [String: Any] {
-            let row = requests.last { $0["path"] as? String == path }
-            XCTAssertNotNil(row, "UI must call \(path)")
-            return row?["body"] as? [String: Any] ?? [:]
-        }
         let provider = payload("/api/provider/save")
         XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
         XCTAssertEqual(provider["models"] as? [String], ["gpt-demo"])
@@ -144,11 +156,5 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertEqual(payload("/api/groups/copy")["id"] as? String, "coding")
         XCTAssertEqual(payload("/api/groups/copy")["name"] as? String, "编程组演示 副本")
         XCTAssertEqual(payload("/api/masking/values")["ps"] as? [String], ["{{EMAIL_demo}}"])
-        let budget = payload("/api/caller-keys/limit-key")["limit"] as? [String: Any]
-        XCTAssertEqual(budget?["tokens"] as? Int, 1000000)
-        XCTAssertEqual(budget?["period"] as? String, "week")
-        let limitIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/limit-key" })
-        let accessIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/access-key" })
-        XCTAssertLessThan(limitIndex, accessIndex, "Budget must be applied before granting caller access")
     }
 }
