@@ -205,17 +205,7 @@ struct ModelContractTests {
         precondition(mapped4b.summary.contains("已结束或已失效"))
 
         // Phase 2: AccountErrorAggregator & RemoteKeyRest(error/failures)
-        let errProviders = try decode([RemoteProvider].self, #"[
-            {"id":"codex","name":"Codex","account":{"agent":"codex","user":"ok@x.com","logins":[
-                {"agent":"codex","user":"ok@x.com","active":true,"on":true,"seen":"2026-11-17T10:00:00+08:00"},
-                {"agent":"codex","user":"bad@x.com","active":false,"on":true,"lapsed":"refresh_token_revoked","seen":"2026-11-17T20:15:00+08:00"}
-            ]}},
-            {"id":"antigravity","name":"Antigravity","account":{"agent":"antigravity","user":"a@gmail.com","logins":[
-                {"agent":"antigravity","user":"a@gmail.com","active":true,"on":true},
-                {"agent":"antigravity","user":"b@gmail.com","active":false,"on":true,"seen":"2026-11-17T21:40:00+08:00"}
-            ]},"accountNames":{"b@gmail.com":"二号机"},"accountRests":{"b@gmail.com":[{"why":"rate","status":429,"until":"2026-11-18T02:00:00+08:00","rate":true,"by":"backoff","error":"Too Many Requests","failures":4,"key":"antigravity#b@gmail.com"}]}},
-            {"id":"custom","name":"自建中转","listError":"dial tcp timeout","keyList":[{"id":"k2","name":"备Key","masked":"sk-••02","on":true,"rest":{"why":"quota","status":402,"until":"2026-11-18T08:00:00+08:00","error":"Insufficient credit","failures":2}}]}
-        ]"#)
+        let errProviders = try decode([RemoteProvider].self, #"[{"id":"codex","name":"Codex","account":{"agent":"codex","user":"ok@x.com","logins":[{"agent":"codex","user":"ok@x.com","active":true,"on":true,"seen":"2026-11-17T10:00:00+08:00"},{"agent":"codex","user":"bad@x.com","active":false,"on":true,"lapsed":"refresh_token_revoked","seen":"2026-11-17T20:15:00+08:00"}]}},{"id":"antigravity","name":"Antigravity","account":{"agent":"antigravity","user":"a@gmail.com","logins":[{"agent":"antigravity","user":"a@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"b@gmail.com","active":false,"on":true,"seen":"2026-11-17T21:40:00+08:00"}]},"accountNames":{"b@gmail.com":"二号机"},"accountRests":{"b@gmail.com":[{"why":"rate","status":429,"until":"2026-11-18T02:00:00+08:00","rate":true,"by":"backoff","error":"Too Many Requests","failures":4,"key":"antigravity#b@gmail.com"}]}},{"id":"custom","name":"自建中转","listError":"dial tcp timeout","keyList":[{"id":"k2","name":"备Key","masked":"sk-••02","on":true,"rest":{"why":"quota","status":402,"until":"2026-11-18T08:00:00+08:00","error":"Insufficient credit","failures":2}}]}]"#)
         let aggregated = AccountErrorAggregator.aggregate(providers: errProviders)
         precondition(aggregated.count == 4, "Expected 4 aggregated errors, got \(aggregated.count)")
         precondition(aggregated[0].category == .auth && aggregated[0].accountUser == "bad@x.com" && aggregated[0].targetTab == .keys)
