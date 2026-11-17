@@ -10,12 +10,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Inspect Xcode & Simulator availability
-        run: |
-          xcodebuild -version
-          xcrun simctl list devices available
-
-      - name: Boot iPhone Simulator
+      - name: Boot standard iPhone Simulator
         run: |
           SIM_UDID=$(python3 -c '
           import json, subprocess, sys
@@ -25,13 +20,14 @@ jobs:
               if "iOS" not in runtime:
                   continue
               for d in devs:
-                  if d.get("isAvailable") and "iPhone" in d.get("name", ""):
-                      candidates.append((runtime, d["name"], d["udid"]))
+                  name = d.get("name", "")
+                  if d.get("isAvailable") and "iPhone" in name and "Duo" not in name:
+                      candidates.append((runtime, "iPhone 18 Pro" == name, "Pro" in name, name, d["udid"]))
           if not candidates:
-              sys.exit("No available iPhone simulator found")
-          candidates.sort(key=lambda x: (x[0], "Pro" in x[1], x[1]), reverse=True)
+              sys.exit("No available standard iPhone simulator found")
+          candidates.sort(key=lambda x: (x[0], x[1], x[2], x[3]), reverse=True)
           print(f"Selected: {candidates[0]}", file=sys.stderr)
-          print(candidates[0][2])
+          print(candidates[0][4])
           ')
           echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM_UDID" || true
@@ -40,7 +36,7 @@ jobs:
       - name: Generate temporary UITest target and XcodeGen project
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install xcodegen
           fi
           mkdir -p MagpieUITests
           cat << 'EOF' > MagpieUITests/MagpieScreenshotTests.swift
@@ -104,7 +100,7 @@ jobs:
                   saveShot("05-new-profile-sheet")
 
                   tapButton(matching: "保存", in: app)
-                  sleep(1)
+                  sleep(2)
                   saveShot("06-profiles-saved")
               }
           }
@@ -113,30 +109,9 @@ jobs:
           python3 -c '
           with open("project.yml", "r") as f:
               txt = f.read()
-          # Replace target-level schemes block with valid target scheme + top-level scheme
           idx = txt.find("    schemes:")
           if idx != -1:
               txt = txt[:idx]
-          addition = """    scheme:
-                testTargets:
-                  - MagpieUITests
-
-            MagpieUITests:
-              type: bundle.ui-testing
-              platform: iOS
-              deploymentTarget: "15.0"
-              sources:
-                - path: MagpieUITests
-              dependencies:
-                - target: Magpie
-              settings:
-                base:
-                  PRODUCT_BUNDLE_IDENTIFIER: ai.usemagpie.ios.uitests
-                  CODE_SIGNING_ALLOWED: "NO"
-                  CODE_SIGNING_REQUIRED: "NO"
-                  GENERATE_INFOPLIST_FILE: "YES"
-          """
-          # Fix indent: 4 spaces for scheme under Magpie, 2 spaces for MagpieUITests under targets
           lines = [
               "    scheme:",
               "      testTargets:",
@@ -160,9 +135,7 @@ jobs:
           with open("project.yml", "w") as f:
               f.write(txt.rstrip() + "\n" + "\n".join(lines) + "\n")
           '
-          cat project.yml
           xcodegen generate --spec project.yml
-          xcodebuild -list -project Magpie.xcodeproj
 
       - name: Run UI tests in iOS Simulator to capture screenshots
         run: |
