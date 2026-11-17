@@ -458,8 +458,9 @@ private struct GroupExtrasSheet: View {
                         Text("服务端未返回内置模板").font(.caption).foregroundColor(.secondary)
                     } else {
                         ForEach(store.groupTemplates) { tpl in
-                            Button("创建「\(tpl.name)」") {
-                                let finalName = templateName.trimmingCharacters(in: .whitespaces).isEmpty ? tpl.name : templateName
+                            Button("创建「\(tpl.group.name.isEmpty ? tpl.kind : tpl.group.name)」") {
+                                let defaultName = tpl.group.name.isEmpty ? tpl.kind : tpl.group.name
+                                let finalName = templateName.trimmingCharacters(in: .whitespaces).isEmpty ? defaultName : templateName
                                 Task {
                                     if await store.createGroupFromTemplate(tpl, name: finalName) {
                                         dismiss()

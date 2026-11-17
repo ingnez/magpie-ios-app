@@ -244,7 +244,7 @@ RESPONSES = {
     "/api/groups": {
         "groups": [GROUP],
         "models": [{"id": "demo/gpt-demo", "name": "GPT 演示模型", "provider": "demo", "providerName": "OpenAI 演示"}],
-        "templates": [{"kind": "coding", "name": "编程主力组", "note": "自动故障转移"}],
+        "templates": [{"kind": "coding", "group": GROUP, "why": "自动故障转移"}],
         "defaults": {"sink": True, "firstToken": 45, "patience": 30},
         "found": True
     },
