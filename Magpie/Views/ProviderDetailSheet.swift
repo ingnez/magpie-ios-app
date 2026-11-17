@@ -152,6 +152,9 @@ struct ProviderDetailSheet: View {
                 .onChange(of: p.id) { _ in
                     syncDrafts(from: p)
                 }
+                .onChange(of: p.maxAccounts) { newMax in
+                    maxAccountsDraft = newMax.map { String($0) } ?? ""
+                }
             } else {
                 VStack(spacing: 12) {
                     Text("该供应商已不存在")
@@ -179,7 +182,12 @@ struct ProviderDetailSheet: View {
                 initialMode: req.mode,
                 forUser: req.forUser,
                 defaultProxy: req.defaultProxy
-            )
+            ) { finishedAgent in
+                Task {
+                    await store.fetchLoginUsage(agent: finishedAgent)
+                    await store.refreshUsage()
+                }
+            }
         }
         .alert("删除供应商？", isPresented: $confirmDelete) {
             Button("删除", role: .destructive) {
@@ -1292,10 +1300,14 @@ struct ProviderDetailSheet: View {
         } else {
             payload["maxConcurrency"] = NSNull()
         }
-        if let ma = Int(maxAccountsDraft.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        let maTrimmed = maxAccountsDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if maTrimmed.isEmpty {
+            payload["maxAccounts"] = NSNull()
+        } else if let ma = Int(maTrimmed), (0...1000).contains(ma) {
             payload["maxAccounts"] = ma
         } else {
-            payload["maxAccounts"] = NSNull()
+            store.showToast("同时启用号数须为 0–1000 的整数（留空为不限）")
+            return
         }
         if let rpm = Int(maxRPMDraft.trimmingCharacters(in: .whitespacesAndNewlines)) {
             payload["maxRPM"] = rpm

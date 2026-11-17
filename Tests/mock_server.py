@@ -84,6 +84,7 @@ AGY_PROVIDER = {
     "name": "Antigravity (谷歌反重力)",
     "ready": True,
     "routing": "order",
+    "maxAccounts": None,
     "models": [
         {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "on": True, "context": 1000000}
     ],

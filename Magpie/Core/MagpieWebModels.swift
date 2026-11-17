@@ -855,6 +855,7 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
     let priceRate: Double?
     let maxConcurrency: Int?
     let maxAccounts: Int?
+    let pluginAccounts: Int?
     let maxRPM: Int?
     let proxy: String
     let keepLogin: Bool
@@ -882,7 +883,7 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
         case listOff, takesListOff, noModels, bestInFamily, chosen, fallback, speaks
         case exposed, models, key, anonKey, keyList, account
         case accountModels, accountNames, accountWeights, accountRests
-        case listError, priceRate, maxConcurrency, maxAccounts, maxRPM, proxy
+        case listError, priceRate, maxConcurrency, maxAccounts, pluginAccounts, maxRPM, proxy
         case keepLogin, keepLoginAs, switchOnly, restartApp, capStop, capCareful
         case accountProxies, accountCaps, accountWindowCaps, accountWindowAmounts
         case accountSeats, accountUsers, accountConcurrency, proxyGone, move
@@ -948,6 +949,7 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
         priceRate = try c.decodeIfPresent(Double.self, forKey: .priceRate)
         maxConcurrency = try c.decodeIfPresent(Int.self, forKey: .maxConcurrency)
         maxAccounts = try c.decodeIfPresent(Int.self, forKey: .maxAccounts)
+        pluginAccounts = try c.decodeIfPresent(Int.self, forKey: .pluginAccounts)
         maxRPM = try c.decodeIfPresent(Int.self, forKey: .maxRPM)
         proxy = try c.decodeIfPresent(String.self, forKey: .proxy) ?? ""
         keepLogin = try c.decodeIfPresent(Bool.self, forKey: .keepLogin) ?? false
@@ -977,6 +979,27 @@ struct RemoteProvider: Decodable, Identifiable, Equatable {
     var exposedCount: Int {
         if exposed > 0 { return exposed }
         return models.filter(\.on).count
+    }
+
+    /// Effective concurrent account limit for routing; nil means unlimited.
+    var effectiveMaxAccounts: Int? {
+        if let ma = maxAccounts {
+            return ma > 0 ? ma : nil
+        }
+        if let pa = pluginAccounts, pa > 0 {
+            return pa
+        }
+        return nil
+    }
+
+    var maxAccountsSummary: String {
+        if let ma = maxAccounts {
+            return ma <= 0 ? "不限 (0)" : "同时上限 \(ma) 个"
+        }
+        if let pa = pluginAccounts, pa > 0 {
+            return "默认 \(pa) 个（插件）"
+        }
+        return "不限 (null)"
     }
 }
 

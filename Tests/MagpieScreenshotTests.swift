@@ -346,7 +346,7 @@ final class MagpieScreenshotTests: XCTestCase {
         cbFieldNorm.typeText("localhost:54321/callback?code=demo-code&state=LU")
         tap("收起键盘", app: app)
         tap("提交并完成登录", app: app, scroll: true)
-        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["demo4@gmail.com"].waitForExistence(timeout: 10))
         let lastCallback = server.requests().last { $0["path"] as? String == "/api/signin/s1/callback" }
         XCTAssertEqual(
             (lastCallback?["body"] as? [String: Any])?["url"] as? String,
@@ -383,6 +383,20 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("收起键盘", app: app)
         tap("提交并完成登录", app: app, scroll: true)
         XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
+
+        // Repeat OAuth addition without overwriting existing accounts -> add 4th account
+        tap("继续添加下一个账号", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["3 个账号"].waitForExistence(timeout: 10))
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        let cbField2 = app.textFields["oauthCallbackField"]
+        XCTAssertTrue(cbField2.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbField2.isHittable { app.swipeUp() }
+        cbField2.tap()
+        cbField2.typeText("http://127.0.0.1:54321/callback?code=demo-code-2&state=s1")
+        tap("收起键盘", app: app)
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["demo4@gmail.com"].waitForExistence(timeout: 10))
         tap("完成并返回", app: app)
 
         let manageButtons = app.buttons.matching(identifier: "管理")
@@ -392,9 +406,71 @@ final class MagpieScreenshotTests: XCTestCase {
         if agyManage.isHittable { agyManage.tap() } else { agyManage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
         tap("多账号号池", app: app)
+
+        // All 4 accounts + refreshed login usage
         XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
+        let scroller = app.scrollViews.allElementsBoundByIndex.filter { $0.exists && $0.frame.height > 180 }.last ?? app.scrollViews.firstMatch
+        for _ in 0..<4 where !app.staticTexts["demo4@gmail.com"].exists { scroller.swipeUp() }
+        XCTAssertTrue(app.staticTexts["demo4@gmail.com"].waitForExistence(timeout: 5))
+
+        // Scroll back to top of account pool
+        for _ in 0..<4 where !app.buttons["configureMaxAccountsButton"].isHittable { scroller.swipeDown() }
+
+        // Test maxAccounts limit (2) -> exceeded warning + reserve status, then reset to null (unlimited)
+        let cfgBtn = app.buttons["configureMaxAccountsButton"]
+        for _ in 0..<5 where !cfgBtn.isHittable { scroller.swipeDown() }
+        cfgBtn.tap()
+        let limitField = app.textFields["maxAccountsLimitField"]
+        XCTAssertTrue(limitField.waitForExistence(timeout: 5))
+        limitField.tap()
+        limitField.typeText("2")
+        tap("收起键盘", app: app)
+        tap("saveMaxAccountsButton", app: app)
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "已超出同时启用上限（2 个）")).firstMatch.waitForExistence(timeout: 10),
+            "Expected exceeded maxAccounts warning banner"
+        )
+        XCTAssertTrue(app.staticTexts["候补顺延"].waitForExistence(timeout: 5))
+
+        for _ in 0..<5 where !cfgBtn.isHittable { scroller.swipeDown() }
+        cfgBtn.tap()
+        tap("不限 (null)", app: app)
+        tap("saveMaxAccountsButton", app: app)
+        let capCleared = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 0"),
+            object: app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "已超出同时启用上限"))
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [capCleared], timeout: 10), .completed)
+
+        // Test weight setting on 3rd account (demo3@gmail.com)
+        let settingsButtons = app.buttons.matching(identifier: "设置")
+        XCTAssertGreaterThanOrEqual(settingsButtons.count, 3)
+        let thirdSettings = settingsButtons.element(boundBy: 2)
+        for _ in 0..<4 where !thirdSettings.isHittable { scroller.swipeUp() }
+        thirdSettings.tap()
+        XCTAssertTrue(app.buttons["3x"].waitForExistence(timeout: 5))
+        tap("3x", app: app)
+        tap("保存权重", app: app)
+        tap("关闭", app: app)
+        XCTAssertTrue(app.staticTexts["权重 3"].waitForExistence(timeout: 10))
+
+        // Test enable/disable toggle on 4th account (demo4@gmail.com)
+        let toggle4 = app.buttons["accountToggle_demo4@gmail.com"]
+        for _ in 0..<6 where !toggle4.isHittable { scroller.swipeUp() }
+        XCTAssertTrue(toggle4.waitForExistence(timeout: 5))
+        toggle4.tap()
+        XCTAssertTrue(app.staticTexts["已停用"].waitForExistence(timeout: 10))
+        for _ in 0..<6 where !toggle4.isHittable { scroller.swipeUp() }
+        toggle4.tap()
+        let reEnabled = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "count == 0"),
+            object: app.staticTexts.matching(identifier: "已停用")
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [reEnabled], timeout: 10), .completed)
+
+        // Switch routing to Rotate & lift rest, then ensure 3+ accounts visible on screen for screenshot
         tap("Rotate 逐轮轮询", app: app, scroll: true)
         XCTAssertTrue(app.staticTexts.matching(identifier: "参与轮询").firstMatch.waitForExistence(timeout: 10))
         if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
@@ -402,14 +478,34 @@ final class MagpieScreenshotTests: XCTestCase {
             let unrestDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["解除冷却"])
             XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
         }
+        for _ in 0..<5 where !app.staticTexts["demo1@gmail.com"].isHittable { scroller.swipeDown() }
+        XCTAssertTrue(app.staticTexts["demo1@gmail.com"].isHittable)
+        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].isHittable)
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].isHittable)
         shot("28-subscription-multi-account-demo")
+
+        // Verify removing 4th account via alert confirmation
+        let removeButtons = app.buttons.matching(identifier: "移除")
+        XCTAssertGreaterThanOrEqual(removeButtons.count, 4)
+        let fourthRemove = removeButtons.element(boundBy: 3)
+        for _ in 0..<4 where !fourthRemove.isHittable { scroller.swipeUp() }
+        fourthRemove.tap()
+        let alertRemove = app.alerts.buttons["移除"]
+        XCTAssertTrue(alertRemove.waitForExistence(timeout: 5))
+        alertRemove.tap()
+        let removedDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.staticTexts["demo4@gmail.com"])
+        XCTAssertEqual(XCTWaiter.wait(for: [removedDone], timeout: 10), .completed)
+
         tap("关闭", app: app)
         let signInReq = payload("/api/signin")
         XCTAssertEqual(signInReq["agent"] as? String, "antigravity")
-        XCTAssertEqual(payload("/api/signin/s1/callback")["url"] as? String, "http://127.0.0.1:54321/callback?code=demo-code&state=s1")
+        XCTAssertEqual(payload("/api/signin/s1/callback")["url"] as? String, "http://127.0.0.1:54321/callback?code=demo-code-2&state=s1")
         XCTAssertEqual(payload("/api/gateway/unrest")["key"] as? String, "antigravity#demo2@gmail.com")
         XCTAssertEqual(payload("/api/provider/route")["routing"] as? String, "rotate")
-
+        XCTAssertEqual(payload("/api/provider/accountweight")["weight"] as? Int, 3)
+        XCTAssertEqual((payload("/api/provider/accountweight")["account"] as? String)?.lowercased(), "demo3@gmail.com")
+        XCTAssertEqual((payload("/api/login/forget")["user"] as? String)?.lowercased(), "demo4@gmail.com")
+        XCTAssertTrue(server.trace().contains { $0["path"] as? String == "/api/login/usage" }, "Must refresh per-account quota usage")
     }
 
 }

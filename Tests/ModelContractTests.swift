@@ -93,6 +93,20 @@ struct ModelContractTests {
         precondition(agyRestProvider.routing == "rotate")
         precondition(agyRestProvider.accountWeights["a@gmail.com"] == 3)
         precondition(agyRestProvider.accountRests["b@gmail.com"]?.first?.key == "antigravity#b@gmail.com")
+        precondition(agyRestProvider.effectiveMaxAccounts == nil && agyRestProvider.maxAccountsSummary == "不限 (null)")
+
+        let fourAcctProvider = try decode(RemoteProvider.self, #"{"id":"antigravity","name":"Antigravity","routing":"weight","maxAccounts":2,"pluginAccounts":2,"account":{"agent":"antigravity","user":"a@gmail.com","logins":[{"agent":"antigravity","user":"a@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"b@gmail.com","active":false,"on":true},{"agent":"antigravity","user":"c@gmail.com","active":false,"on":true},{"agent":"antigravity","user":"d@gmail.com","active":false,"on":true}]},"accountNames":{"c@gmail.com":"主力3号"},"accountWeights":{"a@gmail.com":2,"c@gmail.com":4},"accountRests":{"b@gmail.com":[{"why":"rate","status":429,"until":"2026-11-18T01:00:00+08:00","rate":true,"key":"antigravity#b@gmail.com"}]}}"#)
+        precondition(fourAcctProvider.account?.logins.count == 4, "Must decode N >= 4 accounts without truncation")
+        precondition(fourAcctProvider.accountNames["c@gmail.com"] == "主力3号")
+        precondition(fourAcctProvider.accountWeights["c@gmail.com"] == 4)
+        precondition(fourAcctProvider.effectiveMaxAccounts == 2 && fourAcctProvider.maxAccountsSummary == "同时上限 2 个")
+
+        let zeroUnlimited = try decode(RemoteProvider.self, #"{"id":"codex","name":"Codex","maxAccounts":0,"pluginAccounts":2}"#)
+        precondition(zeroUnlimited.effectiveMaxAccounts == nil && zeroUnlimited.maxAccountsSummary == "不限 (0)")
+
+        let maxAccPayload = preservedProviderPayload(current: ["id": "antigravity", "headers": ["X-Test": "1"], "chosen": ["gemini-2.5-pro"], "accountWeights": ["c@gmail.com": 4], "maxAccounts": 2], changes: ["maxAccounts": NSNull()])
+        precondition(maxAccPayload["maxAccounts"] is NSNull)
+        precondition((maxAccPayload["accountWeights"] as? [String: Int])?["c@gmail.com"] == 4)
 
         // OAuth callback URL normalization, http-only + port/path preflight & real 400 mapping tests
         let screenshotSample = "localhost:54321/callback?state=LU"

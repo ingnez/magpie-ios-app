@@ -137,7 +137,68 @@ final class FixtureHTTPServer {
             }
             json(connection, snapshot("/api/providers")!)
         }
-        else if path == "/api/provider/save" || path.hasPrefix("/api/provider/") || path.hasPrefix("/api/providers/") || path.hasPrefix("/api/keys/") {
+        else if path == "/api/provider/save" {
+            mutateProviders { providers in
+                let pid = payload["id"] as? String ?? ""
+                return providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == pid {
+                        if let ma = payload["maxAccounts"] {
+                            if ma is NSNull {
+                                m["maxAccounts"] = NSNull()
+                            } else if let n = ma as? Int {
+                                m["maxAccounts"] = n
+                            }
+                        }
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path == "/api/provider/accountweight" {
+            mutateProviders { providers in
+                let pid = payload["id"] as? String ?? ""
+                let account = (payload["account"] as? String ?? "").lowercased()
+                let weight = payload["weight"] as? Int ?? 1
+                return providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == pid {
+                        var weights = (m["accountWeights"] as? [String: Int]) ?? [:]
+                        if weight <= 1 {
+                            weights.removeValue(forKey: account)
+                        } else {
+                            weights[account] = weight
+                        }
+                        m["accountWeights"] = weights
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path == "/api/provider/accountname" {
+            mutateProviders { providers in
+                let pid = payload["id"] as? String ?? ""
+                let account = (payload["account"] as? String ?? "").lowercased()
+                let alias = payload["alias"] as? String ?? ""
+                return providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == pid {
+                        var names = (m["accountNames"] as? [String: String]) ?? [:]
+                        if alias.isEmpty {
+                            names.removeValue(forKey: account)
+                        } else {
+                            names[account] = alias
+                        }
+                        m["accountNames"] = names
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path.hasPrefix("/api/provider/") || path.hasPrefix("/api/providers/") || path.hasPrefix("/api/keys/") {
             json(connection, snapshot("/api/providers")!)
         }
         else if path == "/api/masking/values" { json(connection, ["values": ["{{EMAIL_demo}}": "demo@example.invalid"]]) }
@@ -200,26 +261,53 @@ final class FixtureHTTPServer {
                 json(connection, ["error": "that address isn't from this sign-in: paste the one its browser tab ended on"], status: 400)
                 return
             }
-            lock.lock()
-            var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
-            st["state"] = "done"
-            st["user"] = "demo3@gmail.com"
-            st["plan"] = "Google AI Pro"
-            responses["/api/signin/s1"] = st
-            lock.unlock()
+            var addedUser = "demo3@gmail.com"
+            var addedPlan = "Google AI Pro"
             mutateProviders { providers in
                 providers.map { p in
                     var m = p
                     if (m["id"] as? String) == "antigravity", var acc = m["account"] as? [String: Any], var logins = acc["logins"] as? [[String: Any]] {
-                        if !logins.contains(where: { ($0["user"] as? String) == "demo3@gmail.com" }) {
-                            logins.append(["agent": "antigravity", "user": "demo3@gmail.com", "plan": "Google AI Pro", "active": false, "on": true])
+                        let existing = Set(logins.compactMap { ($0["user"] as? String)?.lowercased() })
+                        let candidates: [(String, String)] = [
+                            ("demo3@gmail.com", "Google AI Pro"),
+                            ("demo4@gmail.com", "Google AI Ultra"),
+                            ("demo5@gmail.com", "Google AI Pro"),
+                            ("demo6@gmail.com", "free")
+                        ]
+                        if let next = candidates.first(where: { !existing.contains($0.0) }) {
+                            addedUser = next.0
+                            addedPlan = next.1
+                        } else {
+                            addedUser = "demo\(logins.count + 1)@gmail.com"
+                            addedPlan = "Google AI Pro"
                         }
+                        logins.append(["agent": "antigravity", "user": addedUser, "plan": addedPlan, "active": false, "on": true])
                         acc["logins"] = logins
                         m["account"] = acc
                     }
                     return m
                 }
             }
+            lock.lock()
+            var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
+            st["state"] = "done"
+            st["user"] = addedUser
+            st["plan"] = addedPlan
+            responses["/api/signin/s1"] = st
+            if var usage = responses["/api/login/usage"] as? [String: Any] {
+                usage[addedUser] = [
+                    "provider": "antigravity",
+                    "name": "Antigravity",
+                    "icon": "antigravity-color",
+                    "plan": addedPlan,
+                    "user": addedUser,
+                    "windows": [
+                        ["name": "5小时额度", "used": 12.0, "capId": "5h"]
+                    ]
+                ]
+                responses["/api/login/usage"] = usage
+            }
+            lock.unlock()
             json(connection, [:])
         }
         else if path == "/api/signin/claude-token" { json(connection, ["user": "claude-token-demo"]) }
@@ -249,6 +337,25 @@ final class FixtureHTTPServer {
                             return lm
                         }
                         acc["logins"] = logins
+                        m["account"] = acc
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path == "/api/login/forget" {
+            let targetUser = payload["user"] as? String ?? ""
+            let targetAgent = payload["agent"] as? String ?? ""
+            mutateProviders { providers in
+                providers.map { p in
+                    var m = p
+                    if var acc = m["account"] as? [String: Any], (acc["agent"] as? String) == targetAgent, var logins = acc["logins"] as? [[String: Any]] {
+                        logins.removeAll { ($0["user"] as? String)?.caseInsensitiveCompare(targetUser) == .orderedSame }
+                        acc["logins"] = logins
+                        if (acc["user"] as? String)?.caseInsensitiveCompare(targetUser) == .orderedSame {
+                            acc["user"] = logins.first?["user"] as? String
+                        }
                         m["account"] = acc
                     }
                     return m

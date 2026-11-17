@@ -140,7 +140,12 @@ struct ProvidersView: View {
             }
         }
         .sheet(item: $signingPlatform) { platform in
-            SubscriptionSignInSheet(store: store, platform: platform)
+            SubscriptionSignInSheet(store: store, platform: platform) { finishedAgent in
+                Task {
+                    await store.fetchLoginUsage(agent: finishedAgent)
+                    await store.refreshUsage()
+                }
+            }
         }
         .sheet(isPresented: $presentingPriceSheet) {
             ModelPriceEditorView(store: store)
@@ -348,6 +353,9 @@ struct ProvidersView: View {
                         if !acc.logins.isEmpty {
                             let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
                             MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.ink)
+                            if let cap = provider.effectiveMaxAccounts, cap > 0, onCount > cap {
+                                MagpieTag(text: "上限 \(cap)", tone: MagpieTheme.warn)
+                            }
                         }
                         if !provider.accountRests.isEmpty {
                             MagpieTag(text: "\(provider.accountRests.count) 号冷却", tone: MagpieTheme.warn)

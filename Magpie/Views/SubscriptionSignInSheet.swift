@@ -109,7 +109,7 @@ struct SubscriptionSignInSheet: View {
     }
 
     private var existingProvider: RemoteProvider? {
-        store.providers.first(where: { $0.account?.agent == activePlatform.agent })
+        store.providers.first(where: { $0.account?.agent == activePlatform.agent || $0.id == activePlatform.agent })
     }
 
     private var existingLogins: [RemoteProviderLogin] {
@@ -311,11 +311,22 @@ struct SubscriptionSignInSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             if hasExistingLogins && forUser == nil {
                 MinimalSection(title: "多账号号池状态", trailingText: "\(existingLogins.count) 个账号") {
-                    Text(activePlatform.single
-                         ? "该平台当前仅支持保留单个账号，继续授权将替换现有登录。"
-                         : "当前已有 \(existingLogins.count) 个账号；本次授权将追加新账号进入号池，不会覆盖已有登录。")
-                        .font(.system(size: 12.5))
-                        .foregroundColor(activePlatform.single ? MagpieTheme.warn : MagpieTheme.ok)
+                    if activePlatform.single {
+                        Text("该平台当前仅支持保留单个账号，继续授权将替换现有登录。")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(MagpieTheme.warn)
+                    } else if let cap = existingProvider?.effectiveMaxAccounts, cap > 0, existingLogins.count >= cap {
+                        Text("当前号池已有 \(existingLogins.count) 个账号（同时上限 \(cap) 个）；本次仍可继续追加新账号进入号池（不覆盖已有账号），超出上限的账号将作为候补顺延。")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(MagpieTheme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        let capLabel = existingProvider?.maxAccountsSummary ?? "不限 (null)"
+                        Text("当前已有 \(existingLogins.count) 个账号（同时调度：\(capLabel)）；本次授权将追加新账号进入号池，不会覆盖已有登录。")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(MagpieTheme.ok)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
 
@@ -1129,14 +1140,26 @@ struct SubscriptionSignInSheet: View {
                 }
             }
             if !activePlatform.single && forUser == nil {
+                Text("当前号池共 \(existingLogins.count) 个账号，可继续不限次数追加更多账号。")
+                    .font(.system(size: 12))
+                    .foregroundColor(MagpieTheme.textMuted)
                 HStack(spacing: 10) {
                     Button("继续添加下一个账号") {
                         signInState = nil
+                        selectedSite = nil
                         callbackInput = ""
                         callbackValidationError = nil
                         validatedCallbackSnapshot = nil
                         callbackServerErrorRaw = nil
                         errorText = nil
+                        pluginInputs = [:]
+                        activePluginPrompt = nil
+                        pluginPromptInput = ""
+                        pluginAPIKeyInput = ""
+                        claudeTokenInput = ""
+                        gheHostInput = ""
+                        isSubmittingCallback = false
+                        isBusy = false
                         phase = .launcher
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
@@ -1548,7 +1571,10 @@ struct SubscriptionSignInSheet: View {
                     importResults = resp.results
                     phase = .importResult
                 }
+                await store.fetchLoginUsage(agent: platform.agent)
                 await store.refreshStateOnly()
+                await store.refreshUsage()
+                await store.refreshQuotas(asked: false, all: false)
             } catch {
                 await MainActor.run {
                     errorText = error.localizedDescription

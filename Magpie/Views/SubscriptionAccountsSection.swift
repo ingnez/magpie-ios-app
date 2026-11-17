@@ -11,11 +11,16 @@ struct SubscriptionAccountsSection: View {
     @State private var aliasDraft = ""
     @State private var capDraft = ""
     @State private var weightDraft = "1"
+    @State private var weightError: String?
     @State private var concurrencyDraft = ""
     @State private var proxyDraft = ""
     @State private var modelTargetLogin: RemoteProviderLogin?
     @State private var allowedModelsDraft: Set<String> = []
     @State private var confirmForgetLogin: RemoteProviderLogin?
+
+    @State private var showingMaxAccountsSheet = false
+    @State private var maxAccountsInput = ""
+    @State private var maxAccountsError: String?
 
     private var agent: String {
         account.agent ?? provider.id
@@ -38,6 +43,20 @@ struct SubscriptionAccountsSection: View {
         account.logins
     }
 
+    private var usableLogins: [RemoteProviderLogin] {
+        logins.filter { $0.lapsed == nil && !$0.paused && ($0.active || $0.on) }
+    }
+
+    private var reserveUserKeys: Set<String> {
+        guard let cap = provider.effectiveMaxAccounts, cap > 0 else { return [] }
+        let nonCoolingUsable = usableLogins.filter { login in
+            let rests = provider.accountRests[login.user.lowercased()] ?? []
+            return !rests.contains { ($0.model ?? "").isEmpty }
+        }
+        guard nonCoolingUsable.count > cap else { return [] }
+        return Set(nonCoolingUsable.dropFirst(cap).map { $0.user.lowercased() })
+    }
+
     private var usageMap: [String: RemoteLoginQuota] {
         store.loginUsageByAgent[agent] ?? [:]
     }
@@ -49,40 +68,8 @@ struct SubscriptionAccountsSection: View {
             }
 
             MinimalSection(
-                title: "调度模式：优先级 vs 轮询",
-                trailingText: provider.routing.isEmpty ? "smart" : provider.routing
-            ) {
-                Text(SubscriptionCatalog.routingCategorySummary(provider.routing))
-                    .font(.system(size: 12))
-                    .foregroundColor(MagpieTheme.textSecondary)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("优先级模式（顺位为主）")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(MagpieTheme.textMuted)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
-                        routingQuickChip(id: "", title: "Smart 智能优先级")
-                        routingQuickChip(id: "order", title: "Order 严格顺序")
-                        routingQuickChip(id: "drain", title: "Drain 用尽顺延")
-                    }
-                    Text("轮询与均衡模式（多号分流）")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(MagpieTheme.textMuted)
-                        .padding(.top, 2)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
-                        routingQuickChip(id: "rotate", title: "Rotate 逐轮轮询")
-                        routingQuickChip(id: "weight", title: "Weight 权重轮询")
-                        routingQuickChip(id: "usage", title: "Usage 最少已用")
-                        routingQuickChip(id: "pace", title: "Pace 速率均衡")
-                        routingQuickChip(id: "fast", title: "Fast 速度优先")
-                        routingQuickChip(id: "free", title: "Free 免费优先")
-                    }
-                }
-            }
-
-            MinimalSection(
                 title: "订阅账号池 (\(logins.count))",
-                trailingText: isPriorityMode ? "按列表顺位优先" : "按策略轮询/分流"
+                trailingText: isPriorityMode ? "按顺位优先 · 不限账号数" : "N 账号通用轮询"
             ) {
                 HStack(spacing: 8) {
                     Button("+ OAuth 添加") {
@@ -120,6 +107,52 @@ struct SubscriptionAccountsSection: View {
                     .disabled(isLoadingUsage)
                 }
 
+                // Capacity & maxAccounts configuration bar
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("可用 \(usableLogins.count)/\(logins.count) · 同时调度：\(provider.maxAccountsSummary)")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundColor(MagpieTheme.ink)
+                        Text("号池支持无限新增账号；上限留空 (null) 或 0 表示不限")
+                            .font(.system(size: 11))
+                            .foregroundColor(MagpieTheme.textMuted)
+                    }
+                    Spacer()
+                    Button("上限设置") {
+                        maxAccountsInput = provider.maxAccounts.map(String.init) ?? ""
+                        maxAccountsError = nil
+                        showingMaxAccountsSheet = true
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                    .accessibilityIdentifier("configureMaxAccountsButton")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(MagpieTheme.canvas)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                if let cap = provider.effectiveMaxAccounts, cap > 0, usableLogins.count > cap {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12.5))
+                            .foregroundColor(MagpieTheme.warn)
+                            .padding(.top, 1)
+                        Text("已超出同时启用上限（\(cap) 个）：当前 \(usableLogins.count) 个可用账号中仅前 \(cap) 个同时参与调度，其余 \(usableLogins.count - cap) 个自动作为候补顺延，在主用号冷却或耗尽时顶替。")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(MagpieTheme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(MagpieTheme.warn.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                } else if let cap = provider.effectiveMaxAccounts, cap > 0, logins.count >= cap {
+                    Text("号池账号数已达同时调度上限 \(cap) 个；仍可继续新增账号作为候补，或点击「上限设置」设为不限 (null)。")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
                 if logins.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(account.user.map { "当前登录：\($0)" } ?? "暂无多账号记录")
@@ -139,10 +172,45 @@ struct SubscriptionAccountsSection: View {
                 }
             }
 
+            MinimalSection(
+                title: "调度模式：优先级 vs 轮询",
+                trailingText: provider.routing.isEmpty ? "smart" : provider.routing
+            ) {
+                Text(SubscriptionCatalog.routingCategorySummary(provider.routing))
+                    .font(.system(size: 12))
+                    .foregroundColor(MagpieTheme.textSecondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("优先级模式（顺位为主）")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(MagpieTheme.textMuted)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
+                        routingQuickChip(id: "", title: "Smart 智能优先级")
+                        routingQuickChip(id: "order", title: "Order 严格顺序")
+                        routingQuickChip(id: "drain", title: "Drain 用尽顺延")
+                    }
+                    Text("轮询与均衡模式（多号分流）")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(MagpieTheme.textMuted)
+                        .padding(.top, 2)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
+                        routingQuickChip(id: "rotate", title: "Rotate 逐轮轮询")
+                        routingQuickChip(id: "weight", title: "Weight 权重轮询")
+                        routingQuickChip(id: "usage", title: "Usage 最少已用")
+                        routingQuickChip(id: "pace", title: "Pace 速率均衡")
+                        routingQuickChip(id: "fast", title: "Fast 速度优先")
+                        routingQuickChip(id: "free", title: "Free 免费优先")
+                    }
+                }
+            }
+
             subscriptionPolicySection
         }
         .onAppear {
             refreshUsage()
+        }
+        .sheet(isPresented: $showingMaxAccountsSheet) {
+            maxAccountsEditorSheet
         }
         .sheet(item: $editingLogin) { login in
             accountSettingsSheet(login)
@@ -231,31 +299,34 @@ struct SubscriptionAccountsSection: View {
         let allowedModels = provider.accountModels[lower] ?? []
         let rests = provider.accountRests[lower] ?? []
         let isCoolingWhole = rests.contains { ($0.model ?? "").isEmpty }
+        let isReserve = reserveUserKeys.contains(lower)
         let quota = usageMap.first(where: { $0.key.caseInsensitiveCompare(login.user) == .orderedSame })?.value
-        let usableLogins = logins.filter { $0.lapsed == nil && !$0.paused && ($0.active || $0.on) }
         let totalEnabledWeight = usableLogins.reduce(0) { sum, item in
             sum + max(provider.accountWeights[item.user.lowercased()] ?? 1, 1)
         }
         let thisWeight = max(weight ?? 1, 1)
         let weightSharePct = totalEnabledWeight > 0 ? Int(round(Double(thisWeight) / Double(totalEnabledWeight) * 100.0)) : 0
         let isUsable = login.lapsed == nil && !login.paused && (login.active || login.on)
+        let isCurrentlyOn = !login.paused && (login.on || login.active)
+        let soleFixedPrimary = login.active && !login.paused && usableLogins.count <= 1 && agent != "codex" && agent != "claude"
         let dotColor: Color = {
             if login.lapsed != nil { return MagpieTheme.err }
-            if isCoolingWhole { return MagpieTheme.warn }
+            if isCoolingWhole || isReserve { return MagpieTheme.warn }
             return isUsable ? MagpieTheme.ok : MagpieTheme.textMuted
         }()
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 5) {
                         Text(displayTitle)
                             .font(.system(size: 13.5, weight: .semibold, design: (alias?.isEmpty == false) ? .default : .monospaced))
                             .foregroundColor(MagpieTheme.ink)
+                            .lineLimit(1)
                         if login.lapsed != nil {
                             MagpieTag(text: "登录失效", tone: MagpieTheme.err)
                         } else if login.paused {
@@ -264,14 +335,16 @@ struct SubscriptionAccountsSection: View {
                             MagpieTag(text: "已停用")
                         } else if isCoolingWhole {
                             MagpieTag(text: "冷却跳过", tone: MagpieTheme.warn)
+                        } else if isReserve {
+                            MagpieTag(text: "候补顺延", tone: MagpieTheme.warn)
                         } else if isPriorityMode {
                             MagpieTag(text: idx == 0 ? "优先级 #1" : "顺位 #\(idx + 1)", tone: idx == 0 ? MagpieTheme.ink : MagpieTheme.ok)
                         } else if provider.routing.lowercased() == "weight" {
-                            MagpieTag(text: "权重 \(thisWeight) · 约 \(weightSharePct)% 轮询", tone: MagpieTheme.ok)
+                            MagpieTag(text: "权重 \(thisWeight) · \(weightSharePct)%", tone: MagpieTheme.ok)
                         } else {
                             MagpieTag(text: "参与轮询", tone: MagpieTheme.ok)
                         }
-                        if login.active && !isPriorityMode {
+                        if login.active && !isPriorityMode && !isReserve {
                             MagpieTag(text: "主用", tone: MagpieTheme.ink)
                         }
                     }
@@ -280,13 +353,14 @@ struct SubscriptionAccountsSection: View {
                         Text(login.user)
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(MagpieTheme.textMuted)
+                            .lineLimit(1)
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 4)
 
                 if logins.count > 1 {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 3) {
                         Button("↑") {
                             Task { _ = await store.moveAccountOrder(provider: provider, user: login.user, offset: -1, logins: logins) }
                         }
@@ -299,34 +373,59 @@ struct SubscriptionAccountsSection: View {
                         .disabled(idx >= logins.count - 1)
                     }
                 }
+
+                if login.lapsed == nil && !login.token {
+                    MagpieToggle(
+                        isOn: Binding(
+                            get: { isCurrentlyOn },
+                            set: { enable in
+                                Task {
+                                    _ = await store.performLoginAction(
+                                        enable ? "on" : "off",
+                                        agent: agent,
+                                        user: login.user,
+                                        toast: enable ? "已启用 \(login.user)" : "已停用 \(login.user)"
+                                    )
+                                }
+                            }
+                        )
+                    )
+                    .disabled(soleFixedPrimary)
+                    .opacity(soleFixedPrimary ? 0.45 : 1)
+                    .accessibilityIdentifier("accountToggle_\(login.user)")
+                    .accessibilityLabel("启用开关 \(login.user)")
+                }
             }
 
             // Metadata tags
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
-                    if let plan = login.plan, !plan.isEmpty {
-                        MagpieTag(text: plan, tone: MagpieTheme.ink)
-                    }
-                    if login.token {
-                        MagpieTag(text: login.uses ? "Token 使用中" : "Setup-Token")
-                    }
-                    if login.accessOnly {
-                        MagpieTag(text: "仅 AccessToken", tone: MagpieTheme.warn)
-                    }
-                    if let c = cap, c > 0, c < 100 {
-                        MagpieTag(text: "上限 \(c)%")
-                    }
-                    if let w = weight, w > 1 {
-                        MagpieTag(text: "权重 \(w)")
-                    }
-                    if let conc = conc, conc > 0 {
-                        MagpieTag(text: "并发 \(conc)")
-                    }
-                    if let px = ownProxy, !px.isEmpty {
-                        MagpieTag(text: "代理 \(px)")
-                    }
-                    if !allowedModels.isEmpty {
-                        MagpieTag(text: "限 \(allowedModels.count) 模型")
+            let hasMeta = (login.plan?.isEmpty == false) || login.token || login.accessOnly || (cap ?? 0) > 0 || thisWeight > 1 || (conc ?? 0) > 0 || (ownProxy?.isEmpty == false) || !allowedModels.isEmpty
+            if hasMeta {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 5) {
+                        if let plan = login.plan, !plan.isEmpty {
+                            MagpieTag(text: plan, tone: MagpieTheme.ink)
+                        }
+                        if login.token {
+                            MagpieTag(text: login.uses ? "Token 使用中" : "Setup-Token")
+                        }
+                        if login.accessOnly {
+                            MagpieTag(text: "仅 AccessToken", tone: MagpieTheme.warn)
+                        }
+                        if let c = cap, c > 0, c < 100 {
+                            MagpieTag(text: "上限 \(c)%")
+                        }
+                        if thisWeight > 1 {
+                            MagpieTag(text: "权重 \(thisWeight)")
+                        }
+                        if let conc = conc, conc > 0 {
+                            MagpieTag(text: "并发 \(conc)")
+                        }
+                        if let px = ownProxy, !px.isEmpty {
+                            MagpieTag(text: "代理 \(px)")
+                        }
+                        if !allowedModels.isEmpty {
+                            MagpieTag(text: "限 \(allowedModels.count) 模型")
+                        }
                     }
                 }
             }
@@ -339,18 +438,18 @@ struct SubscriptionAccountsSection: View {
             } else if let q = quota {
                 if let err = q.error, !err.isEmpty {
                     Text("额度查询提示：\(err)")
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 11))
                         .foregroundColor(MagpieTheme.warn)
                 }
                 if !q.windows.isEmpty {
-                    VStack(alignment: .leading, spacing: 5) {
+                    VStack(alignment: .leading, spacing: 4) {
                         ForEach(q.windows) { w in
                             quotaWindowRow(w)
                         }
                     }
-                    .padding(9)
+                    .padding(7)
                     .background(MagpieTheme.canvas)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 } else if let bal = q.balance, !bal.isEmpty {
                     Text("余额：\(bal)")
                         .font(.system(size: 11.5, design: .monospaced))
@@ -358,7 +457,7 @@ struct SubscriptionAccountsSection: View {
                 }
             }
 
-            // Rests
+            // Rests (generic across all N accounts)
             ForEach(Array(rests.enumerated()), id: \.offset) { _, rest in
                 let scope = (rest.model?.isEmpty == false) ? "模型 \(rest.model!) 冷却" : "整号冷却"
                 HStack(spacing: 8) {
@@ -380,34 +479,16 @@ struct SubscriptionAccountsSection: View {
                         .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                     }
                 }
-                .padding(8)
+                .padding(7)
                 .background(MagpieTheme.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
 
-            // Actions
-            HStack(spacing: 8) {
-                if idx > 0 && login.lapsed == nil && isPriorityMode {
-                    Button("设为首选") {
-                        Task { _ = await store.makeAccountFirst(provider: provider, user: login.user, logins: logins) }
-                    }
-                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                }
-
-                if login.token && !login.uses {
-                    Button("CLI 使用此 Token") {
-                        Task {
-                            _ = await store.performLoginAction("switch", agent: agent, user: login.user, toast: "已切换至 \(login.user)")
-                        }
-                    }
-                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                }
-
+            // Actions (compact layout so buttons never clip or crowd on N-account lists)
+            HStack(spacing: 6) {
                 if login.lapsed == nil && !login.token {
-                    let isCurrentlyOn = !login.paused && (login.on || login.active)
-                    let soleFixedPrimary = login.active && !login.paused && usableLogins.count <= 1 && agent != "codex" && agent != "claude"
                     let btnLabel = login.paused ? "恢复" : (isCurrentlyOn ? (login.active ? "暂停" : "停用") : "启用")
-                    Button(btnLabel) {
+                    compactRowButton(btnLabel, tone: .subtle) {
                         let act = isCurrentlyOn ? "off" : "on"
                         Task {
                             _ = await store.performLoginAction(
@@ -418,50 +499,101 @@ struct SubscriptionAccountsSection: View {
                             )
                         }
                     }
-                    .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                     .disabled(soleFixedPrimary)
                 }
 
-                Button("重授权") {
-                    onOpenSignIn(.auto, login.user, ownProxy ?? provider.proxy)
-                }
-                .buttonStyle(MagpieButtonStyle(tone: login.lapsed != nil ? .primary : .subtle, compact: true))
-
-                Button("设置") {
+                compactRowButton("权重 \(thisWeight)", tone: .subtle) {
                     openSettings(for: login)
                 }
-                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
 
-                Spacer()
+                compactRowButton("重授权", tone: login.lapsed != nil ? .primary : .subtle) {
+                    onOpenSignIn(.auto, login.user, ownProxy ?? provider.proxy)
+                }
 
-                Button("移除") {
+                compactRowButton("设置", tone: .subtle) {
+                    openSettings(for: login)
+                }
+
+                Spacer(minLength: 2)
+
+                compactRowButton("移除", tone: .danger) {
                     confirmForgetLogin = login
                 }
-                .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
+            }
+
+            if (idx > 0 && login.lapsed == nil && isPriorityMode) || (login.token && !login.uses) {
+                HStack(spacing: 6) {
+                    if idx > 0 && login.lapsed == nil && isPriorityMode {
+                        compactRowButton("设为首选", tone: .secondary) {
+                            Task { _ = await store.makeAccountFirst(provider: provider, user: login.user, logins: logins) }
+                        }
+                    }
+                    if login.token && !login.uses {
+                        compactRowButton("CLI 使用此 Token", tone: .secondary) {
+                            Task {
+                                _ = await store.performLoginAction("switch", agent: agent, user: login.user, toast: "已切换至 \(login.user)")
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
+    private func compactRowButton(_ title: String, tone: MagpieButtonTone, action: @escaping () -> Void) -> some View {
+        let bg: Color
+        let fg: Color
+        let border: Color
+        switch tone {
+        case .primary:
+            bg = MagpieTheme.ink
+            fg = MagpieTheme.surface
+            border = MagpieTheme.ink
+        case .secondary:
+            bg = MagpieTheme.surface
+            fg = MagpieTheme.ink
+            border = MagpieTheme.hairline
+        case .subtle:
+            bg = MagpieTheme.surfaceSubtle
+            fg = MagpieTheme.ink
+            border = Color.clear
+        case .danger:
+            bg = MagpieTheme.surface
+            fg = MagpieTheme.err
+            border = MagpieTheme.err.opacity(0.3)
+        }
+        return Button(title, action: action)
+            .font(.system(size: 11.5, weight: .medium))
+            .foregroundColor(fg)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(bg)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(border, lineWidth: 1))
+            .buttonStyle(.plain)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
     private func quotaWindowRow(_ w: RemoteLoginQuotaWindow) -> some View {
         let clamped = min(max(w.used, 0), 100)
-        return VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(w.name)
-                    .font(.system(size: 11.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundColor(MagpieTheme.ink)
                 Spacer()
                 if let display = w.display, !display.isEmpty {
                     Text(display)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(MagpieTheme.textSecondary)
                 } else if w.unlimited {
                     Text("不限量")
-                        .font(.system(size: 11))
+                        .font(.system(size: 10.5))
                         .foregroundColor(MagpieTheme.ok)
                 } else {
                     let resetHint = formatResetSecs(w.resetSecs)
                     Text(resetHint.isEmpty ? String(format: "已用 %.0f%%", clamped) : String(format: "已用 %.0f%% · %@", clamped, resetHint))
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 10.5, design: .monospaced))
                         .foregroundColor(clamped >= 90 ? MagpieTheme.err : MagpieTheme.textSecondary)
                 }
             }
@@ -470,13 +602,13 @@ struct SubscriptionAccountsSection: View {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(MagpieTheme.hairline)
-                            .frame(height: 5)
+                            .frame(height: 4)
                         Capsule()
                             .fill(clamped >= 90 ? MagpieTheme.err : (clamped >= 70 ? MagpieTheme.warn : MagpieTheme.ok))
-                            .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 5)
+                            .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 4)
                     }
                 }
-                .frame(height: 5)
+                .frame(height: 4)
             }
         }
     }
@@ -568,6 +700,84 @@ struct SubscriptionAccountsSection: View {
         }
     }
 
+    // MARK: - Max Accounts Limit Sheet
+
+    private var maxAccountsEditorSheet: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("同时启用上限 (maxAccounts)")) {
+                    Text("控制同一时间最多多少个可用账号直接参与调度；留空 (null) 或设为 0 表示不限。号池本身支持无限新增账号，超出上限的账号会自动作为候补，在前序账号冷却或耗尽时顺延顶替。")
+                        .font(.caption)
+                        .foregroundColor(MagpieTheme.textSecondary)
+
+                    TextField("留空 = 不限 (null)，或输入 0–1000", text: $maxAccountsInput)
+                        .keyboardType(.numberPad)
+                        .font(.body.monospaced())
+                        .accessibilityIdentifier("maxAccountsLimitField")
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            Button("不限 (null)") {
+                                maxAccountsInput = ""
+                                maxAccountsError = nil
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: maxAccountsInput.isEmpty ? .primary : .secondary, compact: true))
+
+                            ForEach(["0", "2", "3", "5", "10"], id: \.self) { val in
+                                Button(val == "0" ? "不限 (0)" : "\(val) 个") {
+                                    maxAccountsInput = val
+                                    maxAccountsError = nil
+                                }
+                                .buttonStyle(MagpieButtonStyle(tone: maxAccountsInput == val ? .primary : .secondary, compact: true))
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    if let err = maxAccountsError {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundColor(MagpieTheme.err)
+                    }
+
+                    Button("保存上限") {
+                        let trimmed = maxAccountsInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let parsed: Int?
+                        if trimmed.isEmpty {
+                            parsed = nil
+                        } else if let n = Int(trimmed), (0...1000).contains(n) {
+                            parsed = n
+                        } else {
+                            maxAccountsError = "请输入 0–1000 的整数，或留空表示不限 (null)"
+                            return
+                        }
+                        maxAccountsError = nil
+                        Task {
+                            if await store.updateProviderMaxAccounts(provider, maxAccounts: parsed) {
+                                showingMaxAccountsSheet = false
+                            }
+                        }
+                    }
+                    .accessibilityIdentifier("saveMaxAccountsButton")
+                }
+            }
+            .navigationTitle("账号容量与上限")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { showingMaxAccountsSheet = false }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("收起键盘") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+        .preferredColorScheme(.light)
+    }
+
     // MARK: - Account Settings Sheet
 
     private func openSettings(for login: RemoteProviderLogin) {
@@ -579,6 +789,7 @@ struct SubscriptionAccountsSection: View {
             capDraft = ""
         }
         weightDraft = String(max(provider.accountWeights[lower] ?? 1, 1))
+        weightError = nil
         if let c = provider.accountConcurrency[lower], c > 0 {
             concurrencyDraft = String(c)
         } else {
@@ -618,10 +829,36 @@ struct SubscriptionAccountsSection: View {
                         }
                     }
 
-                    TextField("轮询权重 (默认 1)", text: $weightDraft)
+                    TextField("轮询权重 (1–1000，默认 1)", text: $weightDraft)
                         .keyboardType(.numberPad)
+                        .accessibilityIdentifier("accountWeightField")
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach([1, 2, 3, 5, 10], id: \.self) { w in
+                                Button("\(w)x") {
+                                    weightDraft = String(w)
+                                    weightError = nil
+                                }
+                                .buttonStyle(MagpieButtonStyle(tone: weightDraft == String(w) ? .primary : .secondary, compact: true))
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
+                    if let wErr = weightError {
+                        Text(wErr)
+                            .font(.caption)
+                            .foregroundColor(MagpieTheme.err)
+                    }
+
                     Button("保存权重") {
-                        let w = max(Int(weightDraft.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1, 1)
+                        let trimmed = weightDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let w = Int(trimmed), (1...1000).contains(w) else {
+                            weightError = "权重须为 1–1000 的整数"
+                            return
+                        }
+                        weightError = nil
                         Task {
                             _ = await store.setAccountWeight(providerID: provider.id, account: login.user, weight: w)
                         }
@@ -692,6 +929,12 @@ struct SubscriptionAccountsSection: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭") { editingLogin = nil }
+                }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("收起键盘") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
                 }
             }
         }

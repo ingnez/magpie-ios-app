@@ -10,9 +10,12 @@ extension GatewayStore {
             applyProvidersResponse(resp)
             if let agent = agent, !agent.isEmpty {
                 loginUsageByAgent.removeValue(forKey: agent)
+                await fetchLoginUsage(agent: agent)
             }
             await refreshGroups()
             await refreshStateOnly()
+            await refreshUsage()
+            await refreshQuotas(asked: false, all: false)
         } catch {
             recordActionError(error)
         }
@@ -34,13 +37,32 @@ extension GatewayStore {
             let resp = try await client.loginAction(action, agent: agent, user: user)
             applyProvidersResponse(resp)
             loginUsageByAgent.removeValue(forKey: agent)
+            if resp.providers.contains(where: { ($0.account?.agent == agent || $0.id == agent) && !($0.account?.logins.isEmpty ?? true) }) {
+                await fetchLoginUsage(agent: agent)
+            }
             await refreshStateOnly()
+            await refreshQuotas(asked: false, all: false)
             showToast(toast)
             return true
         } catch {
             recordActionError(error)
             return false
         }
+    }
+
+    func updateProviderMaxAccounts(_ provider: RemoteProvider, maxAccounts: Int?) async -> Bool {
+        if let maxAccounts = maxAccounts, (maxAccounts < 0 || maxAccounts > 1000) {
+            let msg = "同时启用上限须在 0–1000 之间（0 或留空表示不限）"
+            lastActionError = msg
+            showToast(msg)
+            return false
+        }
+        let val: Any = maxAccounts.map { $0 as Any } ?? NSNull()
+        let toast: String = {
+            guard let maxAccounts = maxAccounts else { return "已将同时启用上限设为不限 (null)" }
+            return maxAccounts == 0 ? "已将同时启用上限设为不限 (0)" : "已将同时启用上限设为 \(maxAccounts) 个账号"
+        }()
+        return await saveProviderPayload(["id": provider.id, "maxAccounts": val], toast: toast)
     }
 
     func makeAccountFirst(provider: RemoteProvider, user: String, logins: [RemoteProviderLogin]) async -> Bool {
