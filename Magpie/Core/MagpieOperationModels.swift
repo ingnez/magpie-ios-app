@@ -294,11 +294,13 @@ struct RemoteDavSyncView: Decodable, Equatable {
 // MARK: - Context & Cache Tuning (`internal/gui/tune.go`)
 
 struct RemoteTuneSetting: Decodable, Equatable {
-    let value: String
-    let source: String
-    let locked: String
-    let ours: Bool
-    let take: Bool
+    var value: String = ""
+    var source: String = ""
+    var locked: String = ""
+    var ours: Bool = false
+    var take: Bool = false
+
+    init() {}
 
     enum CodingKeys: String, CodingKey {
         case value, source, locked, ours, take
@@ -387,7 +389,7 @@ struct RemoteTuneAdvice: Decodable, Equatable, Identifiable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         knob = try c.decodeIfPresent(String.self, forKey: .knob) ?? ""
         model = try c.decodeIfPresent(String.self, forKey: .model)
-        setting = try c.decodeIfPresent(RemoteTuneSetting.self, forKey: .setting) ?? try JSONDecoder().decode(RemoteTuneSetting.self, from: Data("{}".utf8))
+        setting = try c.decodeIfPresent(RemoteTuneSetting.self, forKey: .setting) ?? RemoteTuneSetting()
         compact = try c.decodeIfPresent(RemoteTuneCompaction.self, forKey: .compact)
         ttl = try c.decodeIfPresent(RemoteTuneTTL.self, forKey: .ttl)
         async = try c.decodeIfPresent(RemoteTuneAsync.self, forKey: .async)
