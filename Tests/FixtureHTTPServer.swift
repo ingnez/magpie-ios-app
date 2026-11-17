@@ -91,7 +91,11 @@ final class FixtureHTTPServer {
             let value: Any? = { lock.lock(); defer { lock.unlock() }; return responses[path] }()
             guard let value = value else { json(connection, ["error": "unknown GET: \(path)"], status: 404); return }
             if path == "/api/gateway/trace" {
-                queue.asyncAfter(deadline: .now() + 0.4) { self.json(connection, value) }
+                let afterVal = url.queryItems?.first(where: { $0.name == "after" })?.value ?? "0"
+                let waitVal = url.queryItems?.first(where: { $0.name == "wait" })?.value ?? ""
+                let isLongPoll = (waitVal == "1" || waitVal == "true") && afterVal != "0" && !afterVal.isEmpty
+                let delay: TimeInterval = isLongPoll ? 8.0 : 0.2
+                queue.asyncAfter(deadline: .now() + delay) { self.json(connection, value) }
             } else { json(connection, value) }
             return
         }

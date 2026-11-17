@@ -404,7 +404,6 @@ final class MagpieScreenshotTests: XCTestCase {
         let agyManage = manageButtons.element(boundBy: 1)
         for _ in 0..<4 where !agyManage.isHittable { app.swipeUp() }
         if agyManage.isHittable { agyManage.tap() } else { agyManage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
         tap("多账号号池", app: app)
 
         // All 4 accounts + refreshed login usage

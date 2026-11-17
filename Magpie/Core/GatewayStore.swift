@@ -327,6 +327,9 @@ final class GatewayStore: ObservableObject {
                     let resp = try await self.client.fetchTrace(after: seq, wait: true)
                     if Task.isCancelled { break }
                     self.applyTraceResponse(resp)
+                    if resp.seq == seq {
+                        try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    }
                 } catch {
                     if Task.isCancelled { break }
                     try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -351,10 +354,17 @@ final class GatewayStore: ObservableObject {
     }
 
     private func applyTraceResponse(_ resp: RemoteTraceResponse) {
-        traceSeq = resp.seq
-        traceTotals = resp.totals
+        if traceSeq != resp.seq {
+            traceSeq = resp.seq
+        }
+        if traceTotals != resp.totals {
+            traceTotals = resp.totals
+        }
         if resp.ids.isEmpty && traceRoutes.isEmpty {
-            traceRoutes = resp.routes.sorted { $0.id > $1.id }
+            let sorted = resp.routes.sorted { $0.id > $1.id }
+            if traceRoutes != sorted {
+                traceRoutes = sorted
+            }
             return
         }
         var byID: [Int64: RemoteRoute] = [:]
@@ -364,7 +374,10 @@ final class GatewayStore: ObservableObject {
             let valid = Set(resp.ids)
             byID = byID.filter { valid.contains($0.key) }
         }
-        traceRoutes = byID.values.sorted { $0.id > $1.id }
+        let sorted = byID.values.sorted { $0.id > $1.id }
+        if traceRoutes != sorted {
+            traceRoutes = sorted
+        }
     }
 
     func loadHistory(day: String? = nil) async {
