@@ -146,6 +146,37 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("正则与敏感词", app: app, scroll: true)
         shot("17-masking-rules-demo")
         tap("关闭", app: app)
+
+        tap("代理池与网络配置", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["香港节点演示"].waitForExistence(timeout: 10))
+        shot("21-native-proxies-manager-demo")
+        tap("保存代理分流设置", app: app)
+        tap("关闭", app: app)
+
+        tap("备份与云同步管理", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["立即同步"].waitForExistence(timeout: 10))
+        shot("22-native-backup-davsync-demo")
+        tap("立即同步", app: app, scroll: true)
+        tap("关闭", app: app)
+
+        tap("上下文与缓存调优", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["应用推荐值 (160000)"].waitForExistence(timeout: 10))
+        shot("23-native-context-tune-demo")
+        tap("应用推荐值 (160000)", app: app)
+        tap("关闭", app: app)
+
+        tap("系统通用与告警设置", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["保存通用与显示设置"].waitForExistence(timeout: 10))
+        shot("24-native-system-settings-demo")
+        tap("保存通用与显示设置", app: app, scroll: true)
+        tap("关闭", app: app)
+
+        tap("模型自定义定价", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["保存自定义定价"].waitForExistence(timeout: 10))
+        shot("25-native-model-price-demo")
+        tap("保存自定义定价", app: app, scroll: true)
+        tap("关闭", app: app)
+
         tap("查看前后对照", app: app, scroll: true)
         XCTAssertTrue(app.buttons["显示脱敏前对照"].waitForExistence(timeout: 10))
         tap("显示脱敏前对照", app: app)
@@ -168,5 +199,10 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertEqual(payload("/api/groups/copy")["id"] as? String, "coding")
         XCTAssertEqual(payload("/api/groups/copy")["name"] as? String, "编程组演示 副本")
         XCTAssertEqual(payload("/api/masking/values")["ps"] as? [String], ["{{EMAIL_demo}}"])
+        XCTAssertNotNil(server.requests().last { $0["path"] as? String == "/api/davsync/now" })
+        XCTAssertEqual(payload("/api/tune/apply")["value"] as? String, "160000")
+        XCTAssertEqual(payload("/api/model-price")["model"] as? String, "gpt-demo")
+        XCTAssertEqual((payload("/api/model-price")["price"] as? [String: Any])?["cache_read"] as? Double, 0.25)
+        XCTAssertEqual(payload("/api/settings")["proxy"] as? String, "@px-hk")
     }
 }

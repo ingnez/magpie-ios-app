@@ -1661,7 +1661,6 @@ struct ModelPriceEditorView: View {
                 let spec = RemoteModelPriceSpec(input: inp, output: outp, cacheRead: cr, cacheWrite: cw)
                 _ = try await store.client.saveModelPrice(model: clean, price: spec)
                 store.showToast("已保存「\(clean)」自定义定价")
-                dismiss()
             } catch {
                 errorMsg = error.localizedDescription
             }
@@ -1676,7 +1675,6 @@ struct ModelPriceEditorView: View {
             do {
                 _ = try await store.client.saveModelPrice(model: clean, price: nil)
                 store.showToast("已恢复「\(clean)」默认定价")
-                dismiss()
             } catch {
                 errorMsg = error.localizedDescription
             }
