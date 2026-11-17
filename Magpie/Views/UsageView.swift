@@ -3,6 +3,8 @@ import SwiftUI
 struct UsageView: View {
     @ObservedObject var store: GatewayStore
     @State private var showingAutomation = false
+    @State private var showingContextTune = false
+    @State private var confirmClearUsage = false
 
     private let periods: [(id: String, title: String)] = [
         ("today", "今日"),
@@ -43,8 +45,15 @@ struct UsageView: View {
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else {
-                    Button("签到与热身") { showingAutomation = true }
-                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                    HStack(spacing: 8) {
+                        Button("签到与热身") { showingAutomation = true }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        Button("上下文调优 (原生)") { showingContextTune = true }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        Spacer()
+                        Button("清空当前统计") { confirmClearUsage = true }
+                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                    }
                     usageSummarySection
                     UsageTrendView(series: store.usageSummary?.series ?? [])
                     quotasSection
@@ -63,6 +72,17 @@ struct UsageView: View {
             .padding(.bottom, 100)
         }
         .sheet(isPresented: $showingAutomation) { UsageAutomationView(store: store) }
+        .sheet(isPresented: $showingContextTune) { ContextTuneView(store: store) }
+        .alert("清空当前用量统计视图？", isPresented: $confirmClearUsage) {
+            Button("清空", role: .destructive) {
+                Task {
+                    try? await store.client.clearUsage()
+                    await store.refreshUsage()
+                    store.showToast("已清空当前用量统计视图")
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
         .onAppear {
             if store.activeServer != nil {
                 if store.usageSummary == nil {

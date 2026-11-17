@@ -5,6 +5,8 @@ struct ProvidersView: View {
     @State private var sectionTab: ProviderSectionTab = .providers
     @State private var searchText = ""
     @State private var presentingAddSheet = false
+    @State private var presentingPriceSheet = false
+    @State private var presentingGroupExtras = false
     @State private var testingProviderID: String?
     @State private var testResultsByID: [String: String] = [:]
     @State private var pendingDelete: RemoteProvider?
@@ -43,14 +45,29 @@ struct ProvidersView: View {
                     }
                     Spacer()
                     if sectionTab == .providers {
-                        Button("新增") {
-                            presentingAddSheet = true
+                        HStack(spacing: 8) {
+                            Button("定价") {
+                                presentingPriceSheet = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                            .disabled(store.activeServer == nil)
+
+                            Button("新增") {
+                                presentingAddSheet = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                            .disabled(store.activeServer == nil)
                         }
-                        .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
-                        .disabled(store.activeServer == nil)
                     } else {
-                        Button("新建") { creatingGroup = true }
-                        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        HStack(spacing: 8) {
+                            Button("模板/导入/默认") {
+                                presentingGroupExtras = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+
+                            Button("新建") { creatingGroup = true }
+                                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        }
                     }
                 }
 
@@ -106,6 +123,12 @@ struct ProvidersView: View {
         }
         .sheet(isPresented: $presentingAddSheet) {
             AddProviderSheet(store: store)
+        }
+        .sheet(isPresented: $presentingPriceSheet) {
+            ModelPriceEditorView(store: store)
+        }
+        .sheet(isPresented: $presentingGroupExtras) {
+            GroupExtrasSheet(store: store)
         }
         .sheet(item: $selectedProvider) { provider in
             ProviderDetailSheet(store: store, providerID: provider.id)
@@ -206,6 +229,21 @@ struct ProvidersView: View {
                     .font(.system(size: 15.5, weight: .semibold))
                     .foregroundColor(MagpieTheme.ink)
                 Spacer()
+                if store.providers.count > 1 {
+                    Button("↑") {
+                        Task { await store.moveProvider(provider, offset: -1) }
+                    }
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .buttonStyle(.plain)
+
+                    Button("↓") {
+                        Task { await store.moveProvider(provider, offset: 1) }
+                    }
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .buttonStyle(.plain)
+                }
                 MagpieToggle(
                     isOn: Binding(
                         get: { isEnabled },
@@ -309,6 +347,21 @@ struct ProvidersView: View {
                         .foregroundColor(MagpieTheme.textMuted)
                 }
                 Spacer()
+                if !group.auto && store.groups.filter({ !$0.auto }).count > 1 {
+                    Button("↑") {
+                        Task { await store.moveGroup(group, offset: -1) }
+                    }
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .buttonStyle(.plain)
+
+                    Button("↓") {
+                        Task { await store.moveGroup(group, offset: 1) }
+                    }
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .buttonStyle(.plain)
+                }
                 MagpieToggle(
                     isOn: Binding(
                         get: { !group.isOff },
@@ -342,6 +395,14 @@ struct ProvidersView: View {
                 }
                 Button("复制") { copyingGroup = group }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                Button("分享") {
+                    Task {
+                        if let text = await store.shareGroup(group) {
+                            store.copyToClipboard(text, label: "路由组分享文本")
+                        }
+                    }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                 Spacer()
                 if !group.auto {
                     Button("删除", role: .destructive) { pendingGroupDelete = group }
@@ -377,10 +438,111 @@ struct ProvidersView: View {
     }
 }
 
+private struct GroupExtrasSheet: View {
+    @ObservedObject var store: GatewayStore
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var templateName = ""
+    @State private var importText = ""
+    @State private var replaceExisting = false
+    @State private var defaultSink = true
+    @State private var defaultFirstToken = "45"
+    @State private var defaultPatience = "30"
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section(header: Text("从内置模板创建路由组 (/api/groups/template)")) {
+                    TextField("自定义组名（留空使用模板默认名）", text: $templateName)
+                    if store.groupTemplates.isEmpty {
+                        Text("服务端未返回内置模板").font(.caption).foregroundColor(.secondary)
+                    } else {
+                        ForEach(store.groupTemplates) { tpl in
+                            Button("创建「\(tpl.name)」") {
+                                let finalName = templateName.trimmingCharacters(in: .whitespaces).isEmpty ? tpl.name : templateName
+                                Task {
+                                    if await store.createGroupFromTemplate(tpl, name: finalName) {
+                                        dismiss()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section(header: Text("导入路由组 (/api/groups/import)")) {
+                    TextField("粘贴路由组分享文本或 JSON", text: $importText)
+                        .font(.caption.monospaced())
+                        .autocapitalization(.none)
+                    Toggle("覆盖同名路由组", isOn: $replaceExisting)
+                    Button("导入路由组") {
+                        Task {
+                            if await store.importGroup(text: importText, replace: replaceExisting) {
+                                dismiss()
+                            }
+                        }
+                    }
+                    .disabled(importText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                Section(header: Text("路由组全局默认设置 (/api/groups/defaults)")) {
+                    Toggle("报错/限流成员自动沉底 (sink)", isOn: $defaultSink)
+                    HStack {
+                        Text("首字超时 (firstToken 秒)")
+                        Spacer()
+                        TextField("45", text: $defaultFirstToken)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                    }
+                    HStack {
+                        Text("故障容忍窗口 (patience 秒)")
+                        Spacer()
+                        TextField("30", text: $defaultPatience)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                    }
+                    Button("保存路由组全局默认值") {
+                        let ft = Int(defaultFirstToken) ?? 45
+                        let pt = Int(defaultPatience) ?? 30
+                        Task {
+                            if await store.saveGroupDefaults(sink: defaultSink, firstToken: ft, patience: pt) {
+                                dismiss()
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("模板、导入与默认项")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .onAppear {
+                if let defs = store.groupDefaults {
+                    defaultSink = defs.sink
+                    defaultFirstToken = String(defs.firstToken)
+                    defaultPatience = String(defs.patience)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
 private struct AddProviderSheet: View {
     @ObservedObject var store: GatewayStore
     @Environment(\.dismiss) private var dismiss
 
+    enum CreationMode: String, CaseIterable {
+        case custom = "自定义协议地址"
+        case preset = "从官方预设选择"
+    }
+
+    @State private var mode: CreationMode = .custom
+    @State private var selectedPresetID: String = ""
     @State private var name = ""
     @State private var apiKey = ""
     @State private var chatURL = ""
@@ -415,6 +577,40 @@ private struct AddProviderSheet: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 18) {
+                        if !store.presets.isEmpty {
+                            Picker("添加方式", selection: $mode) {
+                                ForEach(CreationMode.allCases, id: \.self) { m in
+                                    Text(m.rawValue).tag(m)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                        }
+
+                        if mode == .preset, !store.presets.isEmpty {
+                            MinimalSection(title: "选择厂商预设", trailingText: "\(store.presets.count) 个预设") {
+                                ForEach(store.presets.prefix(25)) { preset in
+                                    Button {
+                                        selectedPresetID = preset.id
+                                        name = preset.displayTitle
+                                        chatURL = preset.chat ?? ""
+                                        anthropicURL = preset.anthropic ?? ""
+                                        responsesURL = preset.responses ?? ""
+                                    } label: {
+                                        HStack {
+                                            Text(preset.displayTitle)
+                                                .font(.system(size: 13.5, weight: .medium))
+                                                .foregroundColor(MagpieTheme.ink)
+                                            Spacer()
+                                            if selectedPresetID == preset.id {
+                                                MagpieTag(text: "已选", tone: MagpieTheme.ok)
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
                         MinimalSection(title: "供应商参数", trailingText: "/api/provider/save") {
                             MagpieInputField(label: "名称", placeholder: "例如：OpenRouter / 自建中转", text: $name)
                             MagpieInputField(label: "API Key", placeholder: "sk-...", text: $apiKey, isSecure: true, monospaced: true)
@@ -439,6 +635,22 @@ private struct AddProviderSheet: View {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanName.isEmpty {
             errorMsg = "请填写供应商名称"
+            return
+        }
+        if mode == .preset, let preset = store.presets.first(where: { $0.id == selectedPresetID }) {
+            errorMsg = nil
+            isSaving = true
+            Task {
+                let ok = await store.addPresetProvider(
+                    preset: preset,
+                    name: cleanName,
+                    key: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+                    region: preset.regions.first,
+                    customEndpoint: chatURL.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                isSaving = false
+                if ok { dismiss() } else { errorMsg = store.lastActionError }
+            }
             return
         }
         if chatURL.isEmpty && anthropicURL.isEmpty && responsesURL.isEmpty && geminiURL.isEmpty {

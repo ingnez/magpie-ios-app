@@ -196,6 +196,32 @@ struct DashboardView: View {
                     .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                 }
             }
+
+            Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+
+            HStack(spacing: 8) {
+                Button("重启网关") {
+                    Task { _ = await store.restartGateway() }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                Button("接管网关") {
+                    Task { _ = await store.takeOverGateway() }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                Button(store.remoteSettings.gatewayPaused ? "恢复监听" : "暂停监听") {
+                    Task { await store.toggleGatewayPaused(!store.remoteSettings.gatewayPaused) }
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+
+                if let firstProvider = store.providers.first {
+                    Button("解除冷却") {
+                        Task { _ = await store.liftGatewayKeyRest(key: firstProvider.id) }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                }
+            }
         }
     }
 
