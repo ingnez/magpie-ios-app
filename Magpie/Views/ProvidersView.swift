@@ -250,13 +250,14 @@ struct ProvidersView: View {
             }
         }
         ForEach(store.unmovedSubs) { candidate in
-            MinimalSection(title: "\(candidate.name) 需迁移至插件", trailingText: candidate.pkg) {
-                Text(candidate.error.isEmpty ? "该内置订阅已下线，请安装对应插件后继续使用已有账号与模型。" : candidate.error)
+            MinimalSection(title: "\(candidate.name) 需迁移至插件", trailingText: candidate.package) {
+                let errMsg = candidate.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                Text(errMsg.isEmpty ? "该内置订阅已下线，请安装对应插件后继续使用已有账号与模型。" : errMsg)
                     .font(.system(size: 12.5))
                     .foregroundColor(MagpieTheme.warn)
-                if !candidate.pkg.isEmpty {
-                    Button("一键安装插件 \(candidate.pkg)") {
-                        Task { _ = await store.installSubscriptionPlugin(spec: candidate.pkg) }
+                if !candidate.package.isEmpty {
+                    Button("一键安装插件 \(candidate.package)") {
+                        Task { _ = await store.installSubscriptionPlugin(spec: candidate.package) }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                 }
