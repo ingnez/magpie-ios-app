@@ -161,13 +161,20 @@ struct ProxiesManagerView: View {
                         .buttonStyle(.borderless)
                     }
 
-                    Picker("无前缀裸模型 ID (/api/settings/bare-ids)", selection: $bareMode) {
+                    Picker(
+                        "无前缀裸模型 ID (/api/settings/bare-ids)",
+                        selection: Binding(
+                            get: { bareMode },
+                            set: { newValue in
+                                guard newValue != bareMode else { return }
+                                bareMode = newValue
+                                updateBareMode(newValue)
+                            }
+                        )
+                    ) {
                         Text("仅带 provider/ 前缀").tag("off")
                         Text("同时暴露裸模型 ID").tag("also")
                         Text("仅暴露裸模型 ID").tag("only")
-                    }
-                    .onChange(of: bareMode) { newValue in
-                        updateBareMode(newValue)
                     }
 
                     TextField("CORS 允许域名（逗号分隔）", text: $corsInput)
@@ -365,45 +372,9 @@ struct BackupSyncView: View {
                 }
 
                 Section(
-                    header: Text("WebDAV / S3 / GitHub 云同步 (/api/davsync)"),
+                    header: Text("云同步状态与快捷操作 (/api/davsync)"),
                     footer: Text(davSync.on ? "当前状态：已开启（\(davSync.kind.uppercased())）· 上次同步：\(davSync.last ?? "刚刚")" : "当前未启用跨端云同步")
                 ) {
-                    TextField("同步地址（https:// WebDAV、s3:// 或 github://）", text: $syncURL)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                    TextField("用户名 / Access Key ID", text: $syncUser)
-                        .autocapitalization(.none)
-                    SecureField(davSync.passwordSet ? "服务器密码 / Token（已保存，留空保留）" : "服务器密码 / S3 Secret / GitHub Token", text: $syncPassword)
-                    SecureField(davSync.passphraseSet ? "加密口令 Passphrase（已保存，留空保留）" : "端到端加密口令 Passphrase", text: $syncPassphrase)
-
-                    Toggle("包含供应商与路由组", isOn: $syncProviders)
-                    Toggle("包含 API Keys 密钥", isOn: $syncKeys)
-                    Toggle("包含 Agents 模型绑定", isOn: $syncAgents)
-                    Toggle("包含 Profiles 方案与系统设置", isOn: $syncSettings)
-                    Toggle("包含 Library 与 Memory", isOn: $syncLibrary)
-                    Toggle("跨设备共享用量账单 (usage)", isOn: $syncUsage)
-
-                    Button("保存并立即同步 (/api/davsync/save)") {
-                        saveAndSyncWebDAV()
-                    }
-                    .disabled(syncURL.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                    Picker("自动同步间隔 (/api/davsync/auto)", selection: $syncAutoMinutes) {
-                        Text("仅手动").tag(-1)
-                        Text("每 3 分钟").tag(3)
-                        Text("每 15 分钟").tag(15)
-                        Text("每 30 分钟").tag(30)
-                        Text("每 60 分钟").tag(60)
-                    }
-                    .onChange(of: syncAutoMinutes) { mins in
-                        runDavAction("auto", payload: ["minutes": mins], toast: "已更新自动同步频率")
-                    }
-
-                    Toggle("仅单向跟随服务端 (follow-server)", isOn: $followServer)
-                        .onChange(of: followServer) { val in
-                            runDavAction("follow-server", payload: ["on": val], toast: val ? "已开启单向跟随服务端" : "已恢复双向同步")
-                        }
-
                     HStack {
                         Button("立即同步") {
                             runDavAction("now", toast: "已完成云端同步")
@@ -425,6 +396,58 @@ struct BackupSyncView: View {
                     }
                     .font(.caption)
                     .buttonStyle(.borderless)
+
+                    Picker(
+                        "自动同步间隔 (/api/davsync/auto)",
+                        selection: Binding(
+                            get: { syncAutoMinutes },
+                            set: { mins in
+                                guard mins != syncAutoMinutes else { return }
+                                syncAutoMinutes = mins
+                                runDavAction("auto", payload: ["minutes": mins], toast: "已更新自动同步频率")
+                            }
+                        )
+                    ) {
+                        Text("仅手动").tag(-1)
+                        Text("每 3 分钟").tag(3)
+                        Text("每 15 分钟").tag(15)
+                        Text("每 30 分钟").tag(30)
+                        Text("每 60 分钟").tag(60)
+                    }
+
+                    Toggle(
+                        "仅单向跟随服务端 (follow-server)",
+                        isOn: Binding(
+                            get: { followServer },
+                            set: { val in
+                                guard val != followServer else { return }
+                                followServer = val
+                                runDavAction("follow-server", payload: ["on": val], toast: val ? "已开启单向跟随服务端" : "已恢复双向同步")
+                            }
+                        )
+                    )
+                }
+
+                Section(header: Text("WebDAV / S3 / GitHub 云同步配置 (/api/davsync/save)")) {
+                    TextField("同步地址（https:// WebDAV、s3:// 或 github://）", text: $syncURL)
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                    TextField("用户名 / Access Key ID", text: $syncUser)
+                        .autocapitalization(.none)
+                    SecureField(davSync.passwordSet ? "服务器密码 / Token（已保存，留空保留）" : "服务器密码 / S3 Secret / GitHub Token", text: $syncPassword)
+                    SecureField(davSync.passphraseSet ? "加密口令 Passphrase（已保存，留空保留）" : "端到端加密口令 Passphrase", text: $syncPassphrase)
+
+                    Toggle("包含供应商与路由组", isOn: $syncProviders)
+                    Toggle("包含 API Keys 密钥", isOn: $syncKeys)
+                    Toggle("包含 Agents 模型绑定", isOn: $syncAgents)
+                    Toggle("包含 Profiles 方案与系统设置", isOn: $syncSettings)
+                    Toggle("包含 Library 与 Memory", isOn: $syncLibrary)
+                    Toggle("跨设备共享用量账单 (usage)", isOn: $syncUsage)
+
+                    Button("保存并立即同步 (/api/davsync/save)") {
+                        saveAndSyncWebDAV()
+                    }
+                    .disabled(syncURL.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
 
                 Section(
@@ -809,26 +832,47 @@ struct ContextTuneView: View {
                 }
 
                 Section(header: Text("Claude Code 缓存与归属签名 (/api/settings/claude-*)")) {
-                    Picker("主对话 Prompt 缓存 (cache_ttl)", selection: $mainCacheTTL) {
+                    Picker(
+                        "主对话 Prompt 缓存 (cache_ttl)",
+                        selection: Binding(
+                            get: { mainCacheTTL },
+                            set: { val in
+                                guard val != mainCacheTTL else { return }
+                                mainCacheTTL = val
+                                saveClaudeCache(knob: "cache_ttl", value: val)
+                            }
+                        )
+                    ) {
                         Text("默认 (5m)").tag("5m")
                         Text("长效 (1h)").tag("1h")
                     }
-                    .onChange(of: mainCacheTTL) { val in
-                        saveClaudeCache(knob: "cache_ttl", value: val)
-                    }
 
-                    Picker("子代理 Prompt 缓存 (subagent_cache_ttl)", selection: $subCacheTTL) {
+                    Picker(
+                        "子代理 Prompt 缓存 (subagent_cache_ttl)",
+                        selection: Binding(
+                            get: { subCacheTTL },
+                            set: { val in
+                                guard val != subCacheTTL else { return }
+                                subCacheTTL = val
+                                saveClaudeCache(knob: "subagent_cache_ttl", value: val)
+                            }
+                        )
+                    ) {
                         Text("默认 (5m)").tag("5m")
                         Text("长效 (1h)").tag("1h")
                     }
-                    .onChange(of: subCacheTTL) { val in
-                        saveClaudeCache(knob: "subagent_cache_ttl", value: val)
-                    }
 
-                    Toggle("附加 Claude Co-Authored-By 提交签名", isOn: $claudeAttributionOn)
-                        .onChange(of: claudeAttributionOn) { val in
-                            saveClaudeAttribution(val)
-                        }
+                    Toggle(
+                        "附加 Claude Co-Authored-By 提交签名",
+                        isOn: Binding(
+                            get: { claudeAttributionOn },
+                            set: { val in
+                                guard val != claudeAttributionOn else { return }
+                                claudeAttributionOn = val
+                                saveClaudeAttribution(val)
+                            }
+                        )
+                    )
                 }
 
                 Section(header: Text("长对话自动压缩与窗口上限 (/api/settings/*)")) {
@@ -1117,53 +1161,81 @@ struct SystemSettingsEditorView: View {
                         saveGeneralSettings()
                     }
 
-                    Picker("Web 网关模式 (/api/settings/gateway-mode)", selection: $gatewayMode) {
+                    Picker(
+                        "Web 网关模式 (/api/settings/gateway-mode)",
+                        selection: Binding(
+                            get: { gatewayMode },
+                            set: { mode in
+                                guard mode != gatewayMode else { return }
+                                gatewayMode = mode
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateGatewayMode(mode)
+                                        store.showToast("已更新 Web 网关模式")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
+                            }
+                        )
+                    ) {
                         Text("自动判断").tag("")
                         Text("仅网关模式 (on)").tag("on")
                         Text("完整桌面模式 (off)").tag("off")
                     }
-                    .onChange(of: gatewayMode) { mode in
-                        Task {
-                            do {
-                                store.remoteSettings = try await store.client.updateGatewayMode(mode)
-                                store.showToast("已更新 Web 网关模式")
-                            } catch { errorMsg = error.localizedDescription }
-                        }
-                    }
 
-                    Toggle("使用简洁模型名称 (/api/settings/plain-names)", isOn: $plainNames)
-                        .onChange(of: plainNames) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updatePlainNames(on: val)
-                                    store.showToast("已更新模型名称显示格式")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "使用简洁模型名称 (/api/settings/plain-names)",
+                        isOn: Binding(
+                            get: { plainNames },
+                            set: { val in
+                                guard val != plainNames else { return }
+                                plainNames = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updatePlainNames(on: val)
+                                        store.showToast("已更新模型名称显示格式")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
                 }
 
                 Section(header: Text("套餐额度读取与告警通知 (/api/settings/*)")) {
-                    Toggle("额度进度显示为「剩余百分比」 (/api/settings/quota-left)", isOn: $quotaLeft)
-                        .onChange(of: quotaLeft) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updateQuotaLeft(val)
-                                    store.showToast(val ? "已切换为显示剩余额度" : "已切换为显示已用额度")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "额度进度显示为「剩余百分比」 (/api/settings/quota-left)",
+                        isOn: Binding(
+                            get: { quotaLeft },
+                            set: { val in
+                                guard val != quotaLeft else { return }
+                                quotaLeft = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateQuotaLeft(val)
+                                        store.showToast(val ? "已切换为显示剩余额度" : "已切换为显示已用额度")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
 
-                    Picker("额度读取时机 (/api/settings/quota-reads)", selection: $quotaReads) {
+                    Picker(
+                        "额度读取时机 (/api/settings/quota-reads)",
+                        selection: Binding(
+                            get: { quotaReads },
+                            set: { val in
+                                guard val != quotaReads else { return }
+                                quotaReads = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateQuotaReads(val)
+                                        store.showToast("已更新额度读取策略")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
+                            }
+                        )
+                    ) {
                         Text("自动按需读取").tag("")
                         Text("仅手动刷新时读取 (asked)").tag("asked")
-                    }
-                    .onChange(of: quotaReads) { val in
-                        Task {
-                            do {
-                                store.remoteSettings = try await store.client.updateQuotaReads(val)
-                                store.showToast("已更新额度读取策略")
-                            } catch { errorMsg = error.localizedDescription }
-                        }
                     }
 
                     HStack {
@@ -1240,15 +1312,22 @@ struct SystemSettingsEditorView: View {
                         }
                     }
 
-                    Toggle("为无搜索能力的模型开启联网搜索 (/api/settings/search-all)", isOn: $searchAll)
-                        .onChange(of: searchAll) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updateSearchAll(val)
-                                    store.showToast(val ? "已开启全局联网搜索兜底" : "已关闭全局联网搜索兜底")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "为无搜索能力的模型开启联网搜索 (/api/settings/search-all)",
+                        isOn: Binding(
+                            get: { searchAll },
+                            set: { val in
+                                guard val != searchAll else { return }
+                                searchAll = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateSearchAll(val)
+                                        store.showToast(val ? "已开启全局联网搜索兜底" : "已关闭全局联网搜索兜底")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
 
                     HStack {
                         Text("单次搜索结果条数")
@@ -1293,30 +1372,44 @@ struct SystemSettingsEditorView: View {
                     }
                     .disabled(searchKeyInput.trimmingCharacters(in: .whitespaces).isEmpty)
 
-                    Picker("Codex 服务档位 (/api/settings/codex-service-tier)", selection: $codexServiceTier) {
+                    Picker(
+                        "Codex 服务档位 (/api/settings/codex-service-tier)",
+                        selection: Binding(
+                            get: { codexServiceTier },
+                            set: { tier in
+                                guard tier != codexServiceTier else { return }
+                                codexServiceTier = tier
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateCodexServiceTier(tier)
+                                        store.showToast("已更新 Codex 服务档位")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
+                            }
+                        )
+                    ) {
                         Text("跟随客户端请求").tag("")
                         Text("标准档 (default)").tag("default")
                         Text("优先档 (priority)").tag("priority")
                         Text("极速档 (ultrafast)").tag("ultrafast")
                     }
-                    .onChange(of: codexServiceTier) { tier in
-                        Task {
-                            do {
-                                store.remoteSettings = try await store.client.updateCodexServiceTier(tier)
-                                store.showToast("已更新 Codex 服务档位")
-                            } catch { errorMsg = error.localizedDescription }
-                        }
-                    }
 
-                    Toggle("Codex 多代理协议 v1 兼容 (/api/settings/codex-agents-v1)", isOn: $codexAgentsV1)
-                        .onChange(of: codexAgentsV1) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updateCodexAgentsV1(val)
-                                    store.showToast("已更新 Codex 子代理协议版本")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "Codex 多代理协议 v1 兼容 (/api/settings/codex-agents-v1)",
+                        isOn: Binding(
+                            get: { codexAgentsV1 },
+                            set: { val in
+                                guard val != codexAgentsV1 else { return }
+                                codexAgentsV1 = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateCodexAgentsV1(val)
+                                        store.showToast("已更新 Codex 子代理协议版本")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
                 }
 
                 Section(header: Text("隐私转交、本地识别模型与归档 (/api/privacy-model, /api/settings/*)")) {
@@ -1343,36 +1436,57 @@ struct SystemSettingsEditorView: View {
                         }
                     ))
 
-                    Toggle("全局关闭所有 Agent 遥测 (/api/settings/agent-telemetry)", isOn: $agentTelemetryOff)
-                        .onChange(of: agentTelemetryOff) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updateGlobalAgentTelemetry(off: val)
-                                    store.showToast(val ? "已全局关闭 Agent 遥测" : "已恢复 Agent 遥测设置")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "全局关闭所有 Agent 遥测 (/api/settings/agent-telemetry)",
+                        isOn: Binding(
+                            get: { agentTelemetryOff },
+                            set: { val in
+                                guard val != agentTelemetryOff else { return }
+                                agentTelemetryOff = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateGlobalAgentTelemetry(off: val)
+                                        store.showToast(val ? "已全局关闭 Agent 遥测" : "已恢复 Agent 遥测设置")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
 
-                    Toggle("禁止自动扫描本机订阅账号 (/api/settings/account-discovery)", isOn: $noAccountDiscovery)
-                        .onChange(of: noAccountDiscovery) { val in
-                            Task {
-                                do {
-                                    store.remoteSettings = try await store.client.updateAccountDiscovery(off: val)
-                                    store.showToast("已更新订阅账号自动发现策略")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "禁止自动扫描本机订阅账号 (/api/settings/account-discovery)",
+                        isOn: Binding(
+                            get: { noAccountDiscovery },
+                            set: { val in
+                                guard val != noAccountDiscovery else { return }
+                                noAccountDiscovery = val
+                                Task {
+                                    do {
+                                        store.remoteSettings = try await store.client.updateAccountDiscovery(off: val)
+                                        store.showToast("已更新订阅账号自动发现策略")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
 
-                    Toggle("保存网关请求载荷归档 (/api/settings/archive)", isOn: $requestArchiveOn)
-                        .onChange(of: requestArchiveOn) { val in
-                            Task {
-                                do {
-                                    let res = try await store.client.updateRequestArchive(on: val)
-                                    requestArchiveOn = res.on
-                                    store.showToast(res.on ? "已开启请求归档" : "已关闭请求归档")
-                                } catch { errorMsg = error.localizedDescription }
+                    Toggle(
+                        "保存网关请求载荷归档 (/api/settings/archive)",
+                        isOn: Binding(
+                            get: { requestArchiveOn },
+                            set: { val in
+                                guard val != requestArchiveOn else { return }
+                                requestArchiveOn = val
+                                Task {
+                                    do {
+                                        let res = try await store.client.updateRequestArchive(on: val)
+                                        requestArchiveOn = res.on
+                                        store.showToast(res.on ? "已开启请求归档" : "已关闭请求归档")
+                                    } catch { errorMsg = error.localizedDescription }
+                                }
                             }
-                        }
+                        )
+                    )
                 }
 
                 Section(header: Text("更新通道与 GitHub 镜像 (/api/settings/update-mirror)")) {
@@ -1614,7 +1728,10 @@ struct ModelPriceEditorView: View {
                 }
             }
             .task {
-                let first = initialModel.isEmpty ? "gpt-demo" : initialModel
+                let fallback = store.groupModels.first.map { m in
+                    m.id.contains("/") ? String(m.id.split(separator: "/", maxSplits: 1)[1]) : m.id
+                } ?? "gpt-demo"
+                let first = initialModel.isEmpty ? fallback : initialModel
                 modelID = first
                 await loadPrice(for: first)
             }

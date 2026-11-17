@@ -26,7 +26,11 @@ final class MagpieScreenshotTests: XCTestCase {
     }
     private func tap(_ title: String, app: XCUIApplication, scroll: Bool = false) {
         let matches = app.buttons.matching(identifier: title)
-        XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button: \(title)")
+        if !scroll {
+            XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button: \(title)")
+        } else {
+            _ = matches.firstMatch.waitForExistence(timeout: 2)
+        }
         func visible(_ button: XCUIElement) -> Bool {
             guard button.exists && button.isEnabled else { return false }
             let frame = button.frame
@@ -39,8 +43,13 @@ final class MagpieScreenshotTests: XCTestCase {
         if scroll {
             for _ in 0..<12 {
                 if matches.allElementsBoundByIndex.contains(where: visible) { break }
-                if matches.firstMatch.frame.midY < app.frame.midY { app.swipeDown() } else { app.swipeUp() }
+                if matches.firstMatch.exists && matches.firstMatch.frame.midY < app.frame.midY && !matches.firstMatch.frame.isEmpty {
+                    app.swipeDown()
+                } else {
+                    app.swipeUp()
+                }
             }
+            XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button after scroll: \(title)")
         }
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             matches.allElementsBoundByIndex.contains(where: visible)
@@ -203,6 +212,19 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertEqual(payload("/api/tune/apply")["value"] as? String, "160000")
         XCTAssertEqual(payload("/api/model-price")["model"] as? String, "gpt-demo")
         XCTAssertEqual((payload("/api/model-price")["price"] as? [String: Any])?["cache_read"] as? Double, 0.25)
-        XCTAssertEqual(payload("/api/settings")["proxy"] as? String, "@px-hk")
+        XCTAssertTrue(
+            server.requests().contains {
+                ($0["path"] as? String == "/api/settings") &&
+                (($0["body"] as? [String: Any])?["proxy"] as? String == "@px-hk")
+            },
+            "Missing proxy routing POST /api/settings"
+        )
+        XCTAssertTrue(
+            server.requests().contains {
+                ($0["path"] as? String == "/api/settings") &&
+                (($0["body"] as? [String: Any])?["theme"] != nil)
+            },
+            "Missing general settings POST /api/settings"
+        )
     }
 }

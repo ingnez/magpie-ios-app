@@ -13,13 +13,12 @@ struct LogsPrivacyView: View {
 
     @State private var subTab: SettingsSubTab = .all
     @State private var consoleDestination: ConsoleDestination?
-    @State private var showingCallerKeys = false
-    @State private var showingRules = false
-    @State private var showingProxies = false
-    @State private var showingBackupSync = false
-    @State private var showingContextTune = false
-    @State private var showingSystemSettings = false
-    @State private var showingModelPrice = false
+    enum WorkspaceSheet: String, Identifiable {
+        case callerKeys, rules, proxies, backupSync, contextTune, systemSettings, modelPrice
+        var id: String { rawValue }
+    }
+
+    @State private var activeWorkspace: WorkspaceSheet?
     @State private var selectedRecord: RemoteMaskingRecord?
     @State private var confirmClearRecords = false
     @State private var editingServer: MagpieServerProfile?
@@ -81,13 +80,17 @@ struct LogsPrivacyView: View {
             .padding(.bottom, 100)
         }
         .sheet(item: $consoleDestination) { destination in RemoteConsoleView(store: store, destination: destination) }
-        .sheet(isPresented: $showingCallerKeys) { CallerKeysView(store: store) }
-        .sheet(isPresented: $showingRules) { MaskingRulesEditor(store: store) }
-        .sheet(isPresented: $showingProxies) { ProxiesManagerView(store: store) }
-        .sheet(isPresented: $showingBackupSync) { BackupSyncView(store: store) }
-        .sheet(isPresented: $showingContextTune) { ContextTuneView(store: store) }
-        .sheet(isPresented: $showingSystemSettings) { SystemSettingsEditorView(store: store) }
-        .sheet(isPresented: $showingModelPrice) { ModelPriceEditorView(store: store) }
+        .sheet(item: $activeWorkspace) { sheet in
+            switch sheet {
+            case .callerKeys: CallerKeysView(store: store)
+            case .rules: MaskingRulesEditor(store: store)
+            case .proxies: ProxiesManagerView(store: store)
+            case .backupSync: BackupSyncView(store: store)
+            case .contextTune: ContextTuneView(store: store)
+            case .systemSettings: SystemSettingsEditorView(store: store)
+            case .modelPrice: ModelPriceEditorView(store: store)
+            }
+        }
         .sheet(item: $selectedRecord) { record in MaskingRecordDetail(store: store, record: record) }
         .alert("清空服务端脱敏记录？", isPresented: $confirmClearRecords) {
             Button("清空", role: .destructive) { Task { await store.clearMaskingRecords() } }
@@ -155,25 +158,25 @@ struct LogsPrivacyView: View {
     private var nativeWorkspacesSection: some View {
         MinimalSection(title: "原生管理工作台", trailingText: "可编辑 · 实时写回") {
             HStack(spacing: 8) {
-                Button("Caller Keys 管理") { showingCallerKeys = true }
-                Button("正则与敏感词") { showingRules = true }
+                Button("Caller Keys 管理") { activeWorkspace = .callerKeys }
+                Button("正则与敏感词") { activeWorkspace = .rules }
             }
             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
 
             HStack(spacing: 8) {
-                Button("代理池与网络配置") { showingProxies = true }
-                Button("备份与云同步管理") { showingBackupSync = true }
+                Button("代理池与网络配置") { activeWorkspace = .proxies }
+                Button("备份与云同步管理") { activeWorkspace = .backupSync }
             }
             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
 
             HStack(spacing: 8) {
-                Button("上下文与缓存调优") { showingContextTune = true }
-                Button("系统通用与告警设置") { showingSystemSettings = true }
+                Button("上下文与缓存调优") { activeWorkspace = .contextTune }
+                Button("系统通用与告警设置") { activeWorkspace = .systemSettings }
             }
             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
 
             HStack(spacing: 8) {
-                Button("模型自定义定价") { showingModelPrice = true }
+                Button("模型自定义定价") { activeWorkspace = .modelPrice }
             }
             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
         }
@@ -337,7 +340,7 @@ struct LogsPrivacyView: View {
                         .foregroundColor(MagpieTheme.textSecondary)
                     Spacer()
                     Button("打开完整规则编辑器") {
-                        showingRules = true
+                        activeWorkspace = .rules
                     }
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundColor(MagpieTheme.ink)
@@ -547,7 +550,7 @@ struct LogsPrivacyView: View {
                 }
                 Spacer()
                 Button("管理代理池") {
-                    showingProxies = true
+                    activeWorkspace = .proxies
                 }
                 .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
             }
@@ -560,7 +563,7 @@ struct LogsPrivacyView: View {
                     .foregroundColor(MagpieTheme.textSecondary)
                 Spacer()
                 Button("签发与管理") {
-                    showingCallerKeys = true
+                    activeWorkspace = .callerKeys
                 }
                 .font(.system(size: 12, weight: .medium))
                 .foregroundColor(MagpieTheme.ink)
@@ -570,7 +573,7 @@ struct LogsPrivacyView: View {
             if !store.callerKeys.isEmpty {
                 ForEach(store.callerKeys) { ck in
                     Button {
-                        showingCallerKeys = true
+                        activeWorkspace = .callerKeys
                     } label: {
                         HStack {
                             Text(ck.name.isEmpty ? ck.id : ck.name)
