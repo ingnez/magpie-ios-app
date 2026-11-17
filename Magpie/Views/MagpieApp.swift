@@ -2,27 +2,27 @@ import SwiftUI
 
 enum MagpieTab: String, CaseIterable, Identifiable {
     case home
-    case profiles
-    case models
-    case logs
+    case providers
+    case usage
+    case privacy
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .home: return "总览"
-        case .profiles: return "配置"
-        case .models: return "模型"
-        case .logs: return "日志"
+        case .providers: return "供应商"
+        case .usage: return "用量"
+        case .privacy: return "隐私与设置"
         }
     }
 
     var iconName: String {
         switch self {
         case .home: return "circle.grid.2x1"
-        case .profiles: return "slider.horizontal.3"
-        case .models: return "square.stack"
-        case .logs: return "text.alignleft"
+        case .providers: return "square.stack.3d.up"
+        case .usage: return "chart.bar"
+        case .privacy: return "slider.horizontal.3"
         }
     }
 }
@@ -30,10 +30,6 @@ enum MagpieTab: String, CaseIterable, Identifiable {
 @main
 struct MagpieApp: App {
     @StateObject private var store = GatewayStore()
-
-    init() {
-        MagpieLocalGateway.shared.startIfNeeded()
-    }
 
     var body: some Scene {
         WindowGroup {
@@ -47,7 +43,7 @@ struct MagpieApp: App {
 struct MagpieRootView: View {
     @ObservedObject var store: GatewayStore
     @State private var selectedTab: MagpieTab = .home
-    @State private var presentingNewProfile = false
+    @State private var presentingNewServer = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -63,20 +59,17 @@ struct MagpieRootView: View {
                         DashboardView(
                             store: store,
                             onSwitchTab: { selectedTab = $0 },
-                            onOpenNewProfile: {
-                                selectedTab = .profiles
-                                presentingNewProfile = true
-                            }
+                            onOpenNewServer: { presentingNewServer = true }
                         )
-                    case .profiles:
-                        ProfilesView(
+                    case .providers:
+                        ProvidersView(store: store)
+                    case .usage:
+                        UsageView(store: store)
+                    case .privacy:
+                        LogsPrivacyView(
                             store: store,
-                            presentingNewEditor: $presentingNewProfile
+                            presentingNewServer: $presentingNewServer
                         )
-                    case .models:
-                        ModelsView(store: store)
-                    case .logs:
-                        LogsPrivacyView(store: store)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,13 +88,8 @@ struct MagpieRootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: store.toastMessage)
-        .onAppear {
-            Task {
-                await store.checkLocalDaemon()
-                if store.activeProfile != nil {
-                    await store.probeActiveConnection()
-                }
-            }
+        .sheet(isPresented: $presentingNewServer) {
+            ServerEditorSheet(store: store, existing: nil)
         }
     }
 
@@ -115,12 +103,18 @@ struct MagpieRootView: View {
 
             Spacer()
 
-            HStack(spacing: 6) {
-                MagpieStatusLight(kind: store.statusSnapshot.daemonOnline ? .connected : .failed)
-                Text(store.statusSnapshot.daemonOnline ? "127.0.0.1:3425" : "离线")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(MagpieTheme.textSecondary)
+            Button {
+                presentingNewServer = true
+            } label: {
+                HStack(spacing: 6) {
+                    MagpieStatusLight(kind: store.health.kind)
+                    Text(store.activeServer?.hostLabel ?? "未连接")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                        .lineLimit(1)
+                }
             }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 14)

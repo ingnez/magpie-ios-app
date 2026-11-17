@@ -3,93 +3,116 @@ import SwiftUI
 struct DashboardView: View {
     @ObservedObject var store: GatewayStore
     let onSwitchTab: (MagpieTab) -> Void
-    let onOpenNewProfile: () -> Void
+    let onOpenNewServer: () -> Void
 
-    @State private var isRunningSmoke = false
-    @State private var smokeSummary: (ok: Bool, statusCode: Int, latencyMs: Int, output: String)?
+    @State private var traceMode: TraceDisplayMode = .live
+    @State private var selectedRoute: RemoteRoute?
+
+    enum TraceDisplayMode: String, CaseIterable {
+        case live = "实时追踪"
+        case history = "历史记录"
+    }
+
+    private var displayedRoutes: [RemoteRoute] {
+        traceMode == .live ? store.traceRoutes : store.historyRoutes
+    }
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 24) {
                 heroStatusBlock
 
-                if let daemonErr = store.statusSnapshot.lastError {
+                if store.activeServer == nil {
+                    onboardingCard
+                } else if store.health.kind == .failed {
                     MagpieErrorBanner(
-                        title: "本地端口异常",
-                        message: daemonErr,
+                        title: "magpie web 连接失败",
+                        message: store.health.message,
                         retryTitle: "重试"
                     ) {
-                        Task { await store.checkLocalDaemon() }
+                        Task { await store.connectAndRefreshAll() }
                     }
-                } else if store.activeHealth.kind == .failed {
-                    MagpieErrorBanner(
-                        title: "上游连接异常",
-                        message: store.activeHealth.message,
-                        retryTitle: "重测"
-                    ) {
-                        Task { await store.probeActiveConnection() }
-                    }
+                } else {
+                    gatewayOverviewSection
+                    traceSection
                 }
-
-                endpointSection
-                metricsAndPrivacySection
-                smokeTestSection
             }
             .padding(.horizontal, 22)
             .padding(.top, 24)
             .padding(.bottom, 100)
         }
+        .refreshable {
+            await store.connectAndRefreshAll()
+        }
+        .sheet(item: $selectedRoute) { route in
+            RouteDetailSheet(store: store, route: route)
+        }
     }
 
-    // MARK: - Hero Status (Generous Whitespace, No Box Clutter)
+    // MARK: - Hero Status
 
     private var heroStatusBlock: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                MagpieStatusLight(kind: store.activeHealth.kind)
+                MagpieStatusLight(kind: store.health.kind)
                 Text(statusHeadline)
                     .font(.system(size: 12.5, weight: .medium))
                     .foregroundColor(MagpieTheme.textSecondary)
                 Spacer()
-                if let ms = store.activeHealth.latencyMs {
+                if let ms = store.health.latencyMs {
                     Text("\(ms) ms")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(MagpieTheme.textMuted)
                 }
             }
 
-            Text(store.activeProfile?.name ?? "本地回环模式")
+            Text(store.activeServer?.name ?? "未连接远程实例")
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundColor(MagpieTheme.ink)
 
-            Text(store.activeProfile?.baseURL ?? "未指定外部上游 · 请求由 127.0.0.1:3425 本地响应")
-                .font(.system(size: 13, design: store.activeProfile != nil ? .monospaced : .default))
+            Text(store.activeServer?.baseURL ?? "添加运行中的 magpie web 地址与密钥 k 即可远程控制")
+                .font(.system(size: 13, design: store.activeServer != nil ? .monospaced : .default))
                 .foregroundColor(MagpieTheme.textSecondary)
                 .lineLimit(1)
 
-            if let profile = store.activeProfile {
+            if store.activeServer != nil {
                 HStack(spacing: 8) {
-                    MagpieTag(text: profile.targetProtocol.displayName)
-                    MagpieTag(text: profile.defaultModel, monospaced: true)
+                    if !store.remoteSettings.version.isEmpty {
+                        MagpieTag(text: "v\(store.remoteSettings.version)", monospaced: true)
+                    }
+                    if let state = store.remoteState {
+                        MagpieTag(text: "\(state.served) 模型在线")
+                    }
+                    if store.remoteSettings.lan {
+                        MagpieTag(text: "LAN 已共享", tone: MagpieTheme.ok)
+                    }
+                    if store.remoteSettings.redact {
+                        MagpieTag(text: "脱敏已开启", tone: MagpieTheme.ink)
+                    }
                 }
             }
 
             HStack(spacing: 10) {
-                if store.activeProfile != nil {
-                    Button(store.activeHealth.kind == .checking ? "检测中…" : "检测连通") {
-                        Task { await store.probeActiveConnection() }
+                if store.activeServer != nil {
+                    Button(store.isConnecting ? "连接中…" : "刷新状态") {
+                        Task { await store.connectAndRefreshAll() }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
-                    .disabled(store.activeHealth.kind == .checking)
+                    .disabled(store.isConnecting)
+
+                    Button("添加实例") {
+                        onOpenNewServer()
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                 } else {
-                    Button("添加配置") {
-                        onOpenNewProfile()
+                    Button("连接 magpie web") {
+                        onOpenNewServer()
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                 }
 
-                Button(store.profiles.isEmpty ? "管理配置" : "切换配置 (\(store.profiles.count))") {
-                    onSwitchTab(.profiles)
+                Button("供应商 (\(store.providers.count))") {
+                    onSwitchTab(.providers)
                 }
                 .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
             }
@@ -99,87 +122,75 @@ struct DashboardView: View {
     }
 
     private var statusHeadline: String {
-        switch store.activeHealth.kind {
-        case .connected: return "上游已连通"
-        case .checking: return "正在探测上游"
-        case .localOnly: return "本地网关就绪"
-        case .failed: return "连接失败"
-        case .untested: return "待检测"
+        switch store.health.kind {
+        case .connected:
+            return store.isLiveTraceActive ? "已直连 · 实时追踪中" : "已直连 magpie web"
+        case .checking:
+            return "正在交换 Cookie 握手…"
+        case .failed:
+            return "连接异常"
+        case .localOnly, .untested:
+            return "等待配置实例"
         }
     }
 
-    // MARK: - Section 1: Local Endpoint & Client Copy
+    private var onboardingCard: some View {
+        MinimalSection(title: "开始使用", trailingText: "Option A · 远程客户端") {
+            Text("Magpie iOS 已重构为远程原生管理端，直连服务器上运行的 magpie web 接口（默认端口 3430）。")
+                .font(.system(size: 13.5))
+                .foregroundColor(MagpieTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
 
-    private var endpointSection: some View {
-        MinimalSection(title: "本地网关入口", trailingText: "OpenAI / Claude / Gemini") {
-            HStack(spacing: 12) {
-                Text("http://127.0.0.1:3425/v1")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                    .foregroundColor(MagpieTheme.ink)
-                    .lineLimit(1)
-                Spacer()
-                Button("复制") {
-                    store.copyToClipboard("http://127.0.0.1:3425/v1", label: "本地入口")
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+            VStack(alignment: .leading, spacing: 6) {
+                Text("支持特性：")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                Text("• 粘贴带 ?k= 的启动链接自动解析地址与密钥\n• Cookie 会话维持与 HTTP 401 自动续签\n• 实时路由追踪、供应商/路由组控制、用量与脱敏规则")
+                    .font(.system(size: 12))
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Rectangle()
-                .fill(MagpieTheme.hairline)
-                .frame(height: 1)
-
-            HStack(spacing: 8) {
-                Button("SillyTavern") {
-                    let model = store.activeProfile?.defaultModel ?? "claude-sonnet-4-5"
-                    let json = """
-                    {"chat_completion_source":"custom","custom_url":"http://127.0.0.1:3425/v1","custom_api_key":"sk-magpie-local","custom_model":"\(model)"}
-                    """
-                    store.copyToClipboard(json, label: " SillyTavern 配置")
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-
-                Button("Claude Code") {
-                    let env = "export ANTHROPIC_BASE_URL=\"http://127.0.0.1:3425\"\nexport OPENAI_BASE_URL=\"http://127.0.0.1:3425/v1\""
-                    store.copyToClipboard(env, label: "环境变量")
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-
-                Spacer()
-
-                Text("/v1/messages · /v1/responses")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(MagpieTheme.textMuted)
-                    .lineLimit(1)
+            Button("立即添加服务器") {
+                onOpenNewServer()
             }
+            .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
         }
     }
 
-    // MARK: - Section 2: Metrics & Privacy Shield
+    // MARK: - Gateway & Totals Overview
 
-    private var metricsAndPrivacySection: some View {
-        MinimalSection(title: "运行统计与隐私", trailingText: store.privacySettings.enabled ? "脱敏开启" : "直通") {
+    private var gatewayOverviewSection: some View {
+        MinimalSection(
+            title: "网关与实时汇总",
+            trailingText: store.gatewayStatus?.running == true ? "运行中" : "未接管网关"
+        ) {
             HStack(spacing: 0) {
-                statCell(value: "\(store.statusSnapshot.requestsHandled)", label: "请求")
-                statCell(value: "\(store.statusSnapshot.successCount)", label: "成功")
-                statCell(value: "\(store.statusSnapshot.errorCount)", label: "错误")
-                statCell(value: "\(store.statusSnapshot.maskedItemsCount)", label: "已脱敏")
+                statCell(value: "\(store.traceTotals.requests)", label: "总请求")
+                statCell(value: "\(store.traceTotals.rerouted)", label: "故障切换")
+                statCell(value: "\(store.traceTotals.errors)", label: "错误")
+                statCell(value: "\(store.providers.filter { !$0.off && $0.ready }.count)", label: "活跃源")
             }
 
-            Rectangle()
-                .fill(MagpieTheme.hairline)
-                .frame(height: 1)
+            if let gw = store.gatewayStatus, !gw.url.isEmpty {
+                Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("出站隐私脱敏")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(MagpieTheme.ink)
-                    Text("自动掩码密钥、邮箱与手机号，响应时还原")
-                        .font(.system(size: 12))
-                        .foregroundColor(MagpieTheme.textMuted)
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("网关地址")
+                            .font(.system(size: 11.5))
+                            .foregroundColor(MagpieTheme.textMuted)
+                        Text(gw.publicURL ?? gw.url)
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(MagpieTheme.ink)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Button("复制") {
+                        store.copyToClipboard(gw.publicURL ?? gw.url, label: "网关地址")
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                 }
-                Spacer()
-                MagpieToggle(isOn: $store.privacySettings.enabled)
             }
         }
     }
@@ -196,57 +207,262 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: - Section 3: Self-Check
+    // MARK: - Live Trace & History
 
-    private var smokeTestSection: some View {
-        MinimalSection(title: "链路自检") {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("本地闭环验证")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(MagpieTheme.ink)
-                    Text("校验 3425 端口协议转换与脱敏回显")
-                        .font(.system(size: 12))
-                        .foregroundColor(MagpieTheme.textMuted)
+    private var traceSection: some View {
+        MinimalSection(
+            title: "请求路由流",
+            trailingText: traceMode == .live ? "seq \(store.traceSeq)" : "\(displayedRoutes.count) 条"
+        ) {
+            HStack(spacing: 8) {
+                ForEach(TraceDisplayMode.allCases, id: \.self) { mode in
+                    let selected = traceMode == mode
+                    Button(mode.rawValue) {
+                        traceMode = mode
+                        if mode == .history {
+                            Task { await store.loadHistory(day: store.selectedHistoryDay.isEmpty ? nil : store.selectedHistoryDay) }
+                        } else {
+                            store.startLiveTraceIfNeeded()
+                        }
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
+                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
                 }
+
                 Spacer()
-                Button(isRunningSmoke ? "自检中…" : "发起自检") {
-                    isRunningSmoke = true
-                    Task {
-                        let model = store.activeProfile?.defaultModel ?? "gpt-4o"
-                        smokeSummary = await store.runGatewaySmokeTest(
-                            route: "/v1/chat/completions",
-                            prompt: "自检测试：密钥 sk-test-9988776655，邮箱 dev@magpie.local",
-                            model: model
-                        )
-                        isRunningSmoke = false
+
+                if traceMode == .live {
+                    Button(store.isLiveTraceActive ? "暂停" : "监听") {
+                        if store.isLiveTraceActive {
+                            store.stopLiveTrace()
+                        } else {
+                            store.startLiveTraceIfNeeded()
+                        }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                } else if !store.historyDays.isEmpty {
+                    Menu {
+                        ForEach(store.historyDays, id: \.self) { day in
+                            Button(day) {
+                                store.selectedHistoryDay = day
+                                Task { await store.loadHistory(day: day) }
+                            }
+                        }
+                    } label: {
+                        Text(store.selectedHistoryDay.isEmpty ? "选择日期" : store.selectedHistoryDay)
+                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(MagpieTheme.ink)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(MagpieTheme.surfaceSubtle)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     }
                 }
-                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                .disabled(isRunningSmoke)
             }
 
-            if let smoke = smokeSummary {
-                Rectangle()
-                    .fill(MagpieTheme.hairline)
-                    .frame(height: 1)
+            if displayedRoutes.isEmpty {
+                Text(traceMode == .live ? "暂无实时路由请求，等待网关新流量…" : "该日期暂无路由历史")
+                    .font(.system(size: 13))
+                    .foregroundColor(MagpieTheme.textMuted)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(Array(displayedRoutes.prefix(40).enumerated()), id: \.element.id) { idx, route in
+                    if idx > 0 {
+                        Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                    }
+                    routeRow(route)
+                }
+            }
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(smoke.ok ? MagpieTheme.ok : MagpieTheme.err)
-                            .frame(width: 6, height: 6)
-                        Text("HTTP \(smoke.statusCode) · \(smoke.latencyMs) ms")
-                            .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+    private func routeRow(_ route: RemoteRoute) -> some View {
+        Button {
+            selectedRoute = route
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(!route.done ? MagpieTheme.warn : (route.isError ? MagpieTheme.err : MagpieTheme.ok))
+                        .frame(width: 6, height: 6)
+                    Text(route.model.isEmpty ? "unknown" : route.model)
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundColor(MagpieTheme.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(route.done ? "HTTP \(route.status) · \(route.ms)ms" : "流式输出中…")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(route.isError ? MagpieTheme.err : MagpieTheme.textMuted)
+                }
+
+                HStack(spacing: 6) {
+                    if !route.agent.isEmpty {
+                        MagpieTag(text: route.agent)
+                    }
+                    if !route.provider.isEmpty {
+                        MagpieTag(text: "→ \(route.provider)")
+                    }
+                    if route.tries.count > 1 {
+                        MagpieTag(text: "重试 \(route.tries.count) 次", tone: MagpieTheme.warn)
+                    }
+                    if let masked = route.masked, masked.n > 0 {
+                        MagpieTag(text: "脱敏 \(masked.n)", tone: MagpieTheme.ink)
+                    }
+                    Spacer()
+                    if route.priced && route.cost > 0 {
+                        Text(String(format: "$%.4f", route.cost))
+                            .font(.system(size: 11.5, design: .monospaced))
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
-                    Text(smoke.output)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundColor(MagpieTheme.textSecondary)
-                        .lineLimit(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let errText = route.fail ?? route.error, !errText.isEmpty {
+                    Text(errText)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(MagpieTheme.err)
+                        .lineLimit(2)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RouteDetailSheet: View {
+    @ObservedObject var store: GatewayStore
+    let route: RemoteRoute
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var detail: RemoteGatewayCallDetail?
+    @State private var detailError: String?
+    @State private var isLoading = true
+
+    var body: some View {
+        ZStack {
+            MagpieTheme.canvas.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack {
+                    Button("关闭") { dismiss() }
+                        .font(.system(size: 14))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                    Spacer()
+                    Text("路由 #\(route.id)")
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(MagpieTheme.ink)
+                    Spacer()
+                    Color.clear.frame(width: 32, height: 1)
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+                .background(MagpieTheme.surface)
+                .overlay(Rectangle().fill(MagpieTheme.hairline).frame(height: 1), alignment: .bottom)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        MinimalSection(title: "路由摘要", trailingText: route.done ? "HTTP \(route.status)" : "进行中") {
+                            detailLine("模型", route.model)
+                            detailLine("供应商", route.provider.isEmpty ? "-" : route.provider)
+                            detailLine("客户端", route.agent.isEmpty ? "-" : route.agent)
+                            detailLine("耗时 / TTFT", "\(route.ms) ms / \(route.ttft) ms")
+                            detailLine("Tokens", "总 \(route.tokens) · 输出 \(route.out)")
+                            if let keyName = route.callerKeyName, !keyName.isEmpty {
+                                detailLine("Caller Key", keyName)
+                            }
+                        }
+
+                        if !route.tries.isEmpty {
+                            MinimalSection(title: "尝试链路 (\(route.tries.count))") {
+                                ForEach(Array(route.tries.enumerated()), id: \.element.uniqueID) { idx, t in
+                                    if idx > 0 {
+                                        Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                                    }
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack {
+                                            Text(t.id)
+                                                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                                                .foregroundColor(MagpieTheme.ink)
+                                            Spacer()
+                                            Text("HTTP \(t.status) · \(t.ms) ms")
+                                                .font(.system(size: 11.5, design: .monospaced))
+                                                .foregroundColor(MagpieTheme.textMuted)
+                                        }
+                                        if let msg = t.fail ?? t.error, !msg.isEmpty {
+                                            Text(msg)
+                                                .font(.system(size: 11.5))
+                                                .foregroundColor(MagpieTheme.err)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        MinimalSection(title: "请求 / 响应载荷", trailingText: isLoading ? "读取中…" : "/api/gateway/call") {
+                            if let err = detailError {
+                                Text(err)
+                                    .font(.system(size: 12))
+                                    .foregroundColor(MagpieTheme.textMuted)
+                            } else if let detail = detail {
+                                if let reqBody = detail.requestBody, !reqBody.isEmpty {
+                                    Text("Request Body")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundColor(MagpieTheme.textSecondary)
+                                    Text(reqBody)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(MagpieTheme.ink)
+                                        .padding(10)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(MagpieTheme.canvas)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                                if let respBody = detail.responseBody, !respBody.isEmpty {
+                                    Text("Response Body")
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .foregroundColor(MagpieTheme.textSecondary)
+                                    Text(respBody)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(MagpieTheme.ink)
+                                        .padding(10)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(MagpieTheme.canvas)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                }
+                            }
+                        }
+                    }
+                    .padding(22)
+                }
+            }
+        }
+        .preferredColorScheme(.light)
+        .onAppear {
+            Task {
+                switch await store.fetchCallDetail(routeID: route.id) {
+                case .success(let d): detail = d
+                case .failure(let err): detailError = err.errorDescription
+                }
+                isLoading = false
+            }
+        }
+    }
+
+    private func detailLine(_ k: String, _ v: String) -> some View {
+        HStack {
+            Text(k)
+                .font(.system(size: 12.5))
+                .foregroundColor(MagpieTheme.textSecondary)
+            Spacer()
+            Text(v)
+                .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                .foregroundColor(MagpieTheme.ink)
+                .lineLimit(1)
         }
     }
 }

@@ -70,38 +70,23 @@ jobs:
                   sleep(2)
                   saveShot("01-dashboard")
 
-                  // Run live smoke test on local 127.0.0.1:3425 gateway
-                  tapButton(matching: "发起自检", in: app)
-                  sleep(2)
-                  let scroll = app.scrollViews.firstMatch
-                  if scroll.exists {
-                      scroll.swipeUp()
-                      sleep(1)
-                  }
-                  saveShot("02-dashboard-smoke")
-
-                  // Switch to Models tab (local built-in models)
-                  tapButton(matching: "模型", in: app)
-                  sleep(2)
-                  saveShot("03-models")
-
-                  // Switch to Logs & Privacy tab
-                  tapButton(matching: "日志", in: app)
+                  tapButton(matching: "连接 magpie web", in: app)
                   sleep(1)
-                  saveShot("04-logs-privacy")
+                  saveShot("02-server-editor")
+                  tapButton(matching: "取消", in: app)
+                  sleep(1)
 
-                  // Switch to Profiles tab, open New Profile sheet, pick template, save
-                  tapButton(matching: "配置", in: app)
+                  tapButton(matching: "供应商", in: app)
                   sleep(1)
-                  tapButton(matching: "新建", in: app)
-                  sleep(1)
-                  tapButton(matching: "Anthropic", in: app)
-                  sleep(1)
-                  saveShot("05-new-profile-sheet")
+                  saveShot("03-providers")
 
-                  tapButton(matching: "保存", in: app)
-                  sleep(2)
-                  saveShot("06-profiles-saved")
+                  tapButton(matching: "用量", in: app)
+                  sleep(1)
+                  saveShot("04-usage")
+
+                  tapButton(matching: "隐私与设置", in: app)
+                  sleep(1)
+                  saveShot("05-privacy-settings")
               }
           }
           EOF

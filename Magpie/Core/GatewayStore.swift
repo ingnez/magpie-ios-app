@@ -4,79 +4,85 @@ import UIKit
 
 @MainActor
 final class GatewayStore: ObservableObject {
-    @Published var profiles: [ProxyProfile] = []
-    @Published var activeProfileID: UUID?
-    @Published var healthByProfile: [UUID: ConnectionHealth] = [:]
-    @Published var statusSnapshot: GatewayStatusSnapshot = MagpieLocalGateway.shared.currentSnapshot()
-    @Published var logs: [GatewayLogEntry] = []
-
-    @Published var models: [MagpieModelItem] = []
-    @Published var isLoadingModels = false
-    @Published var modelsError: String?
-    @Published var modelsSourceLabel: String = "未拉取"
-    @Published var modelsLatencyMs: Int?
-
-    @Published var privacySettings: PrivacyMaskSettings = PrivacyMaskSettings() {
-        didSet {
-            savePrivacySettings()
-            MagpieLocalGateway.shared.updatePrivacySettings(privacySettings)
-        }
-    }
-
+    // MARK: - Server Profiles & Connection State
+    @Published var servers: [MagpieServerProfile] = []
+    @Published var activeServerID: UUID?
+    @Published var health: ConnectionHealth = .untested
+    @Published var isConnecting = false
     @Published var toastMessage: String?
 
-    private let profilesKey = "magpie.profiles.v2"
-    private let activeIDKey = "magpie.activeProfileID.v2"
-    private let privacyKey = "magpie.privacySettings.v2"
-    private var observerToken: NSObjectProtocol?
+    // MARK: - Remote State (`/api/state`, `/api/settings`, `/api/providers`, `/api/groups`)
+    @Published var remoteState: RemoteStateResponse?
+    @Published var remoteSettings: RemoteSettingsState = RemoteSettingsState()
+    @Published var providers: [RemoteProvider] = []
+    @Published var gatewayStatus: RemoteGatewayStatus?
+    @Published var groups: [RemoteRoutingGroup] = []
+    @Published var autoGroupsFound: Bool = false
+
+    // MARK: - Live Trace & History (`/api/gateway/trace`, `/api/gateway/history`)
+    @Published var traceRoutes: [RemoteRoute] = []
+    @Published var traceTotals: RemoteTraceTotals = RemoteTraceTotals()
+    @Published var traceSeq: Int64 = 0
+    @Published var isLiveTraceActive = false
+    @Published var historyDays: [String] = []
+    @Published var historyRoutes: [RemoteRoute] = []
+    @Published var selectedHistoryDay: String = ""
+
+    // MARK: - Usage & Quotas (`/api/usage`, `/api/usage/quotas`)
+    @Published var usagePeriod: String = "today"
+    @Published var usageSummary: RemoteUsageResponse?
+    @Published var isLoadingUsage = false
+    @Published var quotas: [RemoteUsageQuota] = []
+    @Published var isLoadingQuotas = false
+
+    // MARK: - Masking & Caller Keys (`/api/masking/*`, `/api/caller-keys`)
+    @Published var maskingSummary: RemoteMaskingSummary?
+    @Published var maskingRecords: [RemoteMaskingRecord] = []
+    @Published var maskingPreview: RemoteMaskingPreview?
+    @Published var callerKeys: [RemoteCallerKey] = []
+
+    // MARK: - Action Errors
+    @Published var lastActionError: String?
+
+    let client = MagpieWebClient()
+
+    private let serversKey = "magpie.remote.servers.v1"
+    private let activeServerKey = "magpie.remote.activeServerID.v1"
+    private var traceLoopTask: Task<Void, Never>?
+    private var quotaPollTask: Task<Void, Never>?
     private var toastTask: Task<Void, Never>?
 
     init() {
-        loadPersistedState()
-        syncActiveProfileToGateway()
-        MagpieLocalGateway.shared.updatePrivacySettings(privacySettings)
-        refreshGatewayState()
-
-        observerToken = NotificationCenter.default.addObserver(
-            forName: .magpieGatewayDidUpdate,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.refreshGatewayState()
+        loadServers()
+        Task {
+            await configureClientForActiveServer()
+            if activeServer != nil {
+                await connectAndRefreshAll()
             }
         }
     }
 
     deinit {
-        if let token = observerToken {
-            NotificationCenter.default.removeObserver(token)
-        }
+        traceLoopTask?.cancel()
+        quotaPollTask?.cancel()
     }
 
-    var activeProfile: ProxyProfile? {
-        guard let id = activeProfileID else { return nil }
-        return profiles.first(where: { $0.id == id })
+    var activeServer: MagpieServerProfile? {
+        guard let id = activeServerID else { return nil }
+        return servers.first(where: { $0.id == id })
     }
 
-    var activeHealth: ConnectionHealth {
-        guard let profile = activeProfile else {
-            return ConnectionHealth(
-                kind: .localOnly,
-                latencyMs: nil,
-                statusCode: nil,
-                message: "本地 127.0.0.1:3425 回环就绪",
-                checkedAt: nil
-            )
-        }
-        return healthByProfile[profile.id] ?? .untested
+    func webKey(for serverID: UUID) -> String {
+        KeychainStore.loadWebKey(forServerID: serverID) ?? ""
     }
+
+    // MARK: - Toast & Clipboard
 
     func showToast(_ message: String) {
         toastTask?.cancel()
         toastMessage = message
         toastTask = Task {
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
             if !Task.isCancelled {
                 toastMessage = nil
             }
@@ -88,344 +94,592 @@ final class GatewayStore: ObservableObject {
         showToast("已复制\(label)")
     }
 
-    func refreshGatewayState() {
-        statusSnapshot = MagpieLocalGateway.shared.currentSnapshot()
-        logs = MagpieLocalGateway.shared.recentLogs()
-    }
+    // MARK: - Server CRUD
 
-    func checkLocalDaemon() async {
-        guard let url = URL(string: "http://127.0.0.1:3425/api/status") else { return }
-        var req = URLRequest(url: url, timeoutInterval: 3)
-        req.httpMethod = "GET"
-        do {
-            let (_, response) = try await URLSession.shared.data(for: req)
-            if let http = response as? HTTPURLResponse, http.statusCode == 200 {
-                refreshGatewayState()
-            }
-        } catch {
-            statusSnapshot.daemonOnline = false
-            statusSnapshot.lastError = "本地端口 127.0.0.1:3425 未响应：\(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - Profile CRUD
-
-    func saveProfile(
+    func saveServer(
         editingID: UUID?,
         name: String,
-        rawBaseURL: String,
-        apiKey: String,
-        targetProtocol: MagpieProtocol,
-        defaultModel: String,
+        rawAddressOrLink: String,
+        rawWebKey: String,
+        allowInsecureTLS: Bool,
         activateImmediately: Bool = true
-    ) -> Result<ProxyProfile, ProfileSaveError> {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedName.isEmpty {
-            return .failure(.message("请填写配置名称"))
-        }
+    ) -> Result<MagpieServerProfile, ProfileSaveError> {
+        let trimmedInput = rawAddressOrLink.trimmingCharacters(in: .whitespacesAndNewlines)
+        var resolvedBaseURL: String?
+        var resolvedKey = rawWebKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let urlCheck = URLValidator.validateAndNormalize(rawBaseURL)
-        guard case .valid(let normalizedURL) = urlCheck else {
-            return .failure(.message(urlCheck.errorReason ?? "服务器地址不合法"))
-        }
-
-        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanModel = defaultModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedModel = cleanModel.isEmpty ? targetProtocol.suggestedDefaultModel : cleanModel
-
-        let saved: ProxyProfile
-        if let editingID = editingID, let idx = profiles.firstIndex(where: { $0.id == editingID }) {
-            var updated = profiles[idx]
-            updated.name = trimmedName
-            updated.baseURL = normalizedURL
-            updated.apiKey = cleanKey
-            updated.targetProtocol = targetProtocol
-            updated.defaultModel = resolvedModel
-            updated.updatedAt = Date()
-            profiles[idx] = updated
-            saved = updated
-            healthByProfile[updated.id] = .untested
+        if let parsed = MagpieWebLinkParser.parse(trimmedInput) {
+            resolvedBaseURL = parsed.baseURL
+            if resolvedKey.isEmpty, let extracted = parsed.webKey {
+                resolvedKey = extracted
+            }
         } else {
-            let created = ProxyProfile(
-                name: trimmedName,
-                baseURL: normalizedURL,
-                apiKey: cleanKey,
-                targetProtocol: targetProtocol,
-                defaultModel: resolvedModel
+            let check = URLValidator.validateAndNormalize(trimmedInput)
+            guard case .valid(let normalized) = check else {
+                return .failure(.message(check.errorReason ?? "服务器地址不合法"))
+            }
+            resolvedBaseURL = normalized
+        }
+
+        guard let baseURL = resolvedBaseURL else {
+            return .failure(.message("服务器地址不合法"))
+        }
+
+        if resolvedKey.isEmpty {
+            if let editingID = editingID, !webKey(for: editingID).isEmpty {
+                resolvedKey = webKey(for: editingID)
+            } else {
+                return .failure(.message("请输入 magpie web 访问密钥 k（或直接粘贴带 ?k= 的启动链接）"))
+            }
+        }
+
+        let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalName = cleanName.isEmpty ? (URL(string: baseURL)?.host ?? "Magpie 实例") : cleanName
+
+        let saved: MagpieServerProfile
+        if let editingID = editingID, let idx = servers.firstIndex(where: { $0.id == editingID }) {
+            var updated = servers[idx]
+            updated.name = finalName
+            updated.baseURL = baseURL
+            updated.allowInsecureTLS = allowInsecureTLS
+            updated.updatedAt = Date()
+            servers[idx] = updated
+            saved = updated
+        } else {
+            let created = MagpieServerProfile(
+                name: finalName,
+                baseURL: baseURL,
+                allowInsecureTLS: allowInsecureTLS
             )
-            profiles.insert(created, at: 0)
+            servers.insert(created, at: 0)
             saved = created
-            healthByProfile[created.id] = .untested
         }
 
-        if activateImmediately || activeProfileID == nil {
-            activeProfileID = saved.id
-        }
+        KeychainStore.saveWebKey(resolvedKey, forServerID: saved.id)
 
-        persistProfiles()
-        syncActiveProfileToGateway()
+        if activateImmediately || activeServerID == nil {
+            activeServerID = saved.id
+        }
+        persistServers()
+
+        Task {
+            await configureClientForActiveServer()
+            await connectAndRefreshAll()
+        }
         return .success(saved)
     }
 
-    func activateProfile(_ profile: ProxyProfile) {
-        activeProfileID = profile.id
-        persistProfiles()
-        syncActiveProfileToGateway()
-        showToast("已切换至「\(profile.name)」")
-        Task { await probeConnection(for: profile) }
-    }
-
-    func deactivateToLocalLoopback() {
-        activeProfileID = nil
-        persistProfiles()
-        syncActiveProfileToGateway()
-        showToast("已切回本地回环模式")
-    }
-
-    func deleteProfile(_ profile: ProxyProfile) {
-        profiles.removeAll { $0.id == profile.id }
-        healthByProfile.removeValue(forKey: profile.id)
-        if activeProfileID == profile.id {
-            activeProfileID = profiles.first?.id
+    func activateServer(_ server: MagpieServerProfile) {
+        stopLiveTrace()
+        activeServerID = server.id
+        persistServers()
+        resetRemoteData()
+        showToast("已切换至「\(server.name)」")
+        Task {
+            await configureClientForActiveServer()
+            await connectAndRefreshAll()
         }
-        persistProfiles()
-        syncActiveProfileToGateway()
-        showToast("已删除「\(profile.name)」")
     }
 
-    func updateActiveDefaultModel(_ modelID: String) {
-        guard let activeID = activeProfileID,
-              let idx = profiles.firstIndex(where: { $0.id == activeID }) else {
-            showToast("请先激活一套反代配置")
+    func deleteServer(_ server: MagpieServerProfile) {
+        stopLiveTrace()
+        servers.removeAll { $0.id == server.id }
+        KeychainStore.deleteWebKey(forServerID: server.id)
+        if activeServerID == server.id {
+            activeServerID = servers.first?.id
+            resetRemoteData()
+        }
+        persistServers()
+        showToast("已移除「\(server.name)」")
+        Task {
+            await configureClientForActiveServer()
+            if activeServer != nil {
+                await connectAndRefreshAll()
+            }
+        }
+    }
+
+    private func resetRemoteData() {
+        remoteState = nil
+        remoteSettings = RemoteSettingsState()
+        providers = []
+        gatewayStatus = nil
+        groups = []
+        traceRoutes = []
+        traceTotals = RemoteTraceTotals()
+        traceSeq = 0
+        historyDays = []
+        historyRoutes = []
+        usageSummary = nil
+        quotas = []
+        maskingSummary = nil
+        maskingRecords = []
+        maskingPreview = nil
+        callerKeys = []
+        health = .untested
+        lastActionError = nil
+    }
+
+    private func configureClientForActiveServer() async {
+        if let server = activeServer {
+            await client.configure(server: server, webKey: webKey(for: server.id))
+        } else {
+            await client.configure(server: nil, webKey: "")
+        }
+    }
+
+    // MARK: - Connection & Full Sync
+
+    func connectAndRefreshAll() async {
+        guard activeServer != nil else {
+            health = .untested
             return
         }
-        profiles[idx].defaultModel = modelID
-        profiles[idx].updatedAt = Date()
-        persistProfiles()
-        syncActiveProfileToGateway()
-        showToast("默认模型已设为 \(modelID)")
-    }
+        isConnecting = true
+        lastActionError = nil
+        health = .checking
 
-    // MARK: - Connection Probe & Models
-
-    func probeActiveConnection() async {
-        guard let profile = activeProfile else {
-            await checkLocalDaemon()
-            return
-        }
-        await probeConnection(for: profile)
-    }
-
-    @discardableResult
-    func probeConnection(for profile: ProxyProfile) async -> ConnectionHealth {
-        healthByProfile[profile.id] = .checking
-        let result = await UpstreamClient.probe(
-            rawBaseURL: profile.baseURL,
-            apiKey: profile.apiKey,
-            targetProtocol: profile.targetProtocol
-        )
-        healthByProfile[profile.id] = result
-        return result
-    }
-
-    func fetchModels(forceLocalFallback: Bool = false) async {
-        isLoadingModels = true
-        modelsError = nil
-        defer { isLoadingModels = false }
-
-        if let profile = activeProfile, !forceLocalFallback {
-            let validation = URLValidator.validateAndNormalize(profile.baseURL)
-            guard case .valid(let baseURL) = validation else {
-                modelsError = validation.errorReason ?? "当前配置地址无效"
-                models = []
-                modelsSourceLabel = "地址校验失败"
-                return
-            }
-
-            let endpoint = profile.targetProtocol.modelsEndpoint(baseURL: baseURL, apiKey: profile.apiKey)
-            guard let url = URL(string: endpoint) else {
-                modelsError = "无效的模型接口地址"
-                return
-            }
-
-            var req = URLRequest(url: url, timeoutInterval: 15)
-            req.httpMethod = "GET"
-            profile.targetProtocol.applyAuthHeaders(to: &req, apiKey: profile.apiKey)
-
-            let start = CFAbsoluteTimeGetCurrent()
-            do {
-                let (data, response) = try await URLSession.shared.data(for: req)
-                let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-                modelsLatencyMs = latency
-                guard let http = response as? HTTPURLResponse else {
-                    modelsError = "上游未返回有效 HTTP 响应"
-                    return
-                }
-                guard (200..<300).contains(http.statusCode) else {
-                    let msg = UpstreamClient.extractHTTPErrorMessage(statusCode: http.statusCode, data: data)
-                    modelsError = msg
-                    healthByProfile[profile.id] = ConnectionHealth(
-                        kind: .failed,
-                        latencyMs: latency,
-                        statusCode: http.statusCode,
-                        message: msg,
-                        checkedAt: Date()
-                    )
-                    return
-                }
-
-                let parsed = UpstreamClient.parseModelsPayload(data: data, source: profile.name)
-                if parsed.isEmpty {
-                    modelsError = "上游返回 HTTP \(http.statusCode)，但模型列表为空"
-                } else {
-                    models = parsed
-                    modelsSourceLabel = "\(profile.name) · 实时"
-                    healthByProfile[profile.id] = ConnectionHealth(
-                        kind: .connected,
-                        latencyMs: latency,
-                        statusCode: http.statusCode,
-                        message: "已拉取 \(parsed.count) 个模型 · \(latency) ms",
-                        checkedAt: Date()
-                    )
-                }
-                return
-            } catch {
-                let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-                modelsLatencyMs = latency
-                let msg = UpstreamClient.describeNetworkError(error)
-                modelsError = msg
-                healthByProfile[profile.id] = ConnectionHealth(
-                    kind: .failed,
-                    latencyMs: latency,
-                    statusCode: nil,
-                    message: msg,
-                    checkedAt: Date()
-                )
-                return
-            }
-        }
-
-        guard let localURL = URL(string: "http://127.0.0.1:3425/v1/models") else { return }
-        let start = CFAbsoluteTimeGetCurrent()
         do {
-            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: localURL, timeoutInterval: 5))
-            modelsLatencyMs = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                modelsError = "本地网关 /v1/models 返回异常"
-                return
-            }
-            models = UpstreamClient.parseModelsPayload(data: data, source: "本地内置")
-            modelsSourceLabel = forceLocalFallback ? "本地内置目录" : "127.0.0.1:3425 内置目录"
-        } catch {
-            modelsError = "本地网关不可达：\(error.localizedDescription)"
-        }
-    }
-
-    func runGatewaySmokeTest(route: String, prompt: String, model: String) async -> (ok: Bool, statusCode: Int, latencyMs: Int, output: String) {
-        let cleanRoute = route.hasPrefix("/") ? route : "/\(route)"
-        guard let url = URL(string: "http://127.0.0.1:3425\(cleanRoute)") else {
-            return (false, 0, 0, "无效的本地路由：\(cleanRoute)")
-        }
-
-        var req = URLRequest(url: url, timeoutInterval: 65)
-        let isGet = (cleanRoute == "/api/status" || cleanRoute == "/v1/models" || cleanRoute == "/api/config")
-        req.httpMethod = isGet ? "GET" : "POST"
-        if !isGet {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let bodyDict: [String: Any]
-            switch cleanRoute {
-            case "/v1/messages":
-                bodyDict = ["model": model, "max_tokens": 512, "messages": [["role": "user", "content": prompt]]]
-            case "/v1/responses":
-                bodyDict = ["model": model, "input": prompt]
-            default:
-                if cleanRoute.hasPrefix("/v1beta/models") {
-                    bodyDict = ["contents": [["role": "user", "parts": [["text": prompt]]]]]
-                } else {
-                    bodyDict = ["model": model, "messages": [["role": "user", "content": prompt]]]
-                }
-            }
-            req.httpBody = try? JSONSerialization.data(withJSONObject: bodyDict)
-        }
-
-        let start = CFAbsoluteTimeGetCurrent()
-        do {
-            let (data, response) = try await URLSession.shared.data(for: req)
-            let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            refreshGatewayState()
-            return ((200..<300).contains(code), code, latency, Self.prettyJSONString(from: data))
-        } catch {
-            let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            return (false, 0, latency, UpstreamClient.describeNetworkError(error))
-        }
-    }
-
-    private static func prettyJSONString(from data: Data) -> String {
-        if let obj = try? JSONSerialization.jsonObject(with: data),
-           let formatted = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
-           let str = String(data: formatted, encoding: .utf8) {
-            return str
-        }
-        return String(data: data, encoding: .utf8) ?? "<空响应>"
-    }
-
-    func clearLogs() {
-        MagpieLocalGateway.shared.clearLogs()
-        showToast("已清空请求日志")
-    }
-
-    // MARK: - Persistence
-
-    private func loadPersistedState() {
-        let decoder = JSONDecoder()
-        if let data = UserDefaults.standard.data(forKey: profilesKey),
-           let decoded = try? decoder.decode([ProxyProfile].self, from: data) {
-            profiles = decoded
-        }
-        if let idStr = UserDefaults.standard.string(forKey: activeIDKey),
-           let uuid = UUID(uuidString: idStr),
-           profiles.contains(where: { $0.id == uuid }) {
-            activeProfileID = uuid
-        } else {
-            activeProfileID = profiles.first?.id
-        }
-        if let pData = UserDefaults.standard.data(forKey: privacyKey),
-           let decodedPrivacy = try? decoder.decode(PrivacyMaskSettings.self, from: pData) {
-            privacySettings = decodedPrivacy
-        }
-    }
-
-    private func persistProfiles() {
-        if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: profilesKey)
-        }
-        if let id = activeProfileID {
-            UserDefaults.standard.set(id.uuidString, forKey: activeIDKey)
-        } else {
-            UserDefaults.standard.removeObject(forKey: activeIDKey)
-        }
-    }
-
-    private func savePrivacySettings() {
-        if let data = try? JSONEncoder().encode(privacySettings) {
-            UserDefaults.standard.set(data, forKey: privacyKey)
-        }
-    }
-
-    private func syncActiveProfileToGateway() {
-        if let active = activeProfile {
-            MagpieLocalGateway.shared.applyUpstreamConfig(
-                MagpieUpstreamConfig(
-                    baseURL: active.baseURL,
-                    apiKey: active.apiKey,
-                    targetProtocol: active.targetProtocol.rawValue,
-                    defaultModel: active.defaultModel,
-                    profileName: active.name
-                )
+            await configureClientForActiveServer()
+            let (stateResp, latency) = try await client.probeAndFetchState(forceReauth: true)
+            remoteState = stateResp
+            remoteSettings = stateResp.settings
+            health = ConnectionHealth(
+                kind: .connected,
+                latencyMs: latency,
+                statusCode: 200,
+                message: "已认证（Cookie 有效）· 服务 \(stateResp.served) 个模型",
+                checkedAt: Date()
             )
+            isConnecting = false
+
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await self.refreshProviders() }
+                group.addTask { await self.refreshGroups() }
+                group.addTask { await self.refreshTraceOnce() }
+                group.addTask { await self.refreshUsage() }
+                group.addTask { await self.refreshSettings() }
+            }
+            startLiveTraceIfNeeded()
+        } catch {
+            isConnecting = false
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            health = ConnectionHealth(
+                kind: .failed,
+                latencyMs: nil,
+                statusCode: nil,
+                message: msg,
+                checkedAt: Date()
+            )
+            lastActionError = msg
+        }
+    }
+
+    // MARK: - Trace & History
+
+    func startLiveTraceIfNeeded() {
+        guard activeServer != nil, health.kind == .connected else { return }
+        if traceLoopTask != nil { return }
+        isLiveTraceActive = true
+        traceLoopTask = Task { [weak self] in
+            guard let self = self else { return }
+            while !Task.isCancelled {
+                do {
+                    let seq = self.traceSeq
+                    let resp = try await self.client.fetchTrace(after: seq, wait: true)
+                    if Task.isCancelled { break }
+                    self.applyTraceResponse(resp)
+                } catch {
+                    if Task.isCancelled { break }
+                    try? await Task.sleep(nanoseconds: 2_500_000_000)
+                }
+            }
+        }
+    }
+
+    func stopLiveTrace() {
+        traceLoopTask?.cancel()
+        traceLoopTask = nil
+        isLiveTraceActive = false
+    }
+
+    func refreshTraceOnce() async {
+        do {
+            let resp = try await client.fetchTrace(after: 0, wait: false)
+            applyTraceResponse(resp)
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    private func applyTraceResponse(_ resp: RemoteTraceResponse) {
+        traceSeq = resp.seq
+        traceTotals = resp.totals
+        if resp.ids.isEmpty && traceRoutes.isEmpty {
+            traceRoutes = resp.routes.sorted { $0.id > $1.id }
+            return
+        }
+        var byID: [Int64: RemoteRoute] = [:]
+        for r in traceRoutes { byID[r.id] = r }
+        for r in resp.routes { byID[r.id] = r }
+        if !resp.ids.isEmpty {
+            let valid = Set(resp.ids)
+            byID = byID.filter { valid.contains($0.key) }
+        }
+        traceRoutes = byID.values.sorted { $0.id > $1.id }
+    }
+
+    func loadHistory(day: String? = nil) async {
+        do {
+            let resp = try await client.fetchHistory(day: day)
+            historyDays = resp.days
+            historyRoutes = resp.routes.sorted { $0.id > $1.id }
+            if selectedHistoryDay.isEmpty, let first = resp.days.first {
+                selectedHistoryDay = first
+            }
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func fetchCallDetail(routeID: Int64) async -> Result<RemoteGatewayCallDetail, MagpieWebError> {
+        do {
+            let detail = try await client.fetchCallDetail(routeID: routeID)
+            return .success(detail)
+        } catch let err as MagpieWebError {
+            return .failure(err)
+        } catch {
+            return .failure(.networkError(error.localizedDescription))
+        }
+    }
+
+    // MARK: - Providers & Groups
+
+    func refreshProviders() async {
+        do {
+            let resp = try await client.fetchProviders()
+            providers = resp.providers
+            gatewayStatus = resp.gateway
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func toggleProvider(_ provider: RemoteProvider, enabled: Bool) async {
+        do {
+            let resp = try await client.setProviderEnabled(id: provider.id, enabled: enabled)
+            providers = resp.providers
+            gatewayStatus = resp.gateway
+            showToast(enabled ? "已启用「\(provider.name)」" : "已停用「\(provider.name)」")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func testProvider(_ provider: RemoteProvider) async -> String {
+        do {
+            let results = try await client.testProvider(id: provider.id)
+            if results.isEmpty {
+                return "未返回探测结果"
+            }
+            let summary = results.map { item -> String in
+                let p = item.proto ?? "api"
+                if item.ok {
+                    return "\(p): OK (\(item.ms ?? 0) ms)"
+                }
+                return "\(p): 失败 \(item.error ?? "HTTP \(item.status ?? 0)")"
+            }.joined(separator: "\n")
+            return summary
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            recordActionError(error)
+            return msg
+        }
+    }
+
+    func refreshProviderModels(_ provider: RemoteProvider) async {
+        do {
+            let resp = try await client.refreshProviderModels(id: provider.id)
+            providers = resp.providers
+            showToast("已刷新「\(provider.name)」模型列表")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func refreshProviderBalance(_ provider: RemoteProvider) async {
+        do {
+            let resp = try await client.refreshProviderBalance(id: provider.id)
+            providers = resp.providers
+            showToast("已刷新「\(provider.name)」余额")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func addCustomProvider(
+        name: String,
+        key: String,
+        chatURL: String,
+        anthropicURL: String,
+        responsesURL: String,
+        geminiURL: String
+    ) async -> Bool {
+        do {
+            let resp = try await client.saveCustomProvider(
+                id: nil,
+                name: name,
+                key: key,
+                chat: chatURL,
+                anthropic: anthropicURL,
+                responses: responsesURL,
+                gemini: geminiURL
+            )
+            providers = resp.providers
+            showToast("已添加供应商「\(name)」")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
+    func deleteProvider(_ provider: RemoteProvider) async {
+        do {
+            let resp = try await client.deleteProvider(id: provider.id)
+            providers = resp.providers
+            showToast("已删除「\(provider.name)」")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func refreshGroups() async {
+        do {
+            let resp = try await client.fetchGroups()
+            groups = resp.groups
+            autoGroupsFound = resp.found
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func switchGroup(_ group: RemoteRoutingGroup, enabled: Bool) async {
+        do {
+            let resp = try await client.switchGroup(id: group.id, on: enabled)
+            groups = resp.groups
+            showToast(enabled ? "已开启路由组「\(group.name)」" : "已停用路由组「\(group.name)」")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func pickGroupMember(_ group: RemoteRoutingGroup, member: String) async {
+        do {
+            let resp = try await client.pickGroupMember(id: group.id, member: member)
+            groups = resp.groups
+            showToast("已切换成员：\(member)")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    // MARK: - Usage & Quotas
+
+    func refreshUsage(period: String? = nil) async {
+        if let p = period { usagePeriod = p }
+        isLoadingUsage = true
+        defer { isLoadingUsage = false }
+        do {
+            usageSummary = try await client.fetchUsage(period: usagePeriod)
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func refreshQuotas(asked: Bool = true, all: Bool = false) async {
+        quotaPollTask?.cancel()
+        isLoadingQuotas = true
+        do {
+            let res = try await client.fetchQuotas(asked: asked, all: all)
+            quotas = res.quotas
+            isLoadingQuotas = false
+            if res.isReading {
+                scheduleQuotaFollowUp()
+            }
+        } catch {
+            isLoadingQuotas = false
+            recordActionError(error)
+        }
+    }
+
+    func refreshSingleQuota(provider: String, user: String?) async {
+        do {
+            quotas = try await client.refreshQuota(provider: provider, user: user)
+            showToast("已刷新额度窗口")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    private func scheduleQuotaFollowUp() {
+        quotaPollTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self = self, !Task.isCancelled else { return }
+            if let res = try? await self.client.fetchQuotas(asked: false, all: false) {
+                self.quotas = res.quotas
+                if res.isReading && !Task.isCancelled {
+                    self.scheduleQuotaFollowUp()
+                }
+            }
+        }
+    }
+
+    // MARK: - Masking, Settings & Caller Keys
+
+    func refreshSettings() async {
+        do {
+            remoteSettings = try await client.fetchSettings()
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func refreshMaskingData() async {
+        do {
+            async let sum = client.fetchMaskingSummary(days: 7)
+            async let rec = client.fetchMaskingRecords(limit: 40)
+            async let keys = client.fetchCallerKeys()
+            maskingSummary = try await sum
+            maskingRecords = try await rec.records
+            callerKeys = try await keys
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func updatePrivacySettingsPatch(_ patch: [String: Any]) async {
+        do {
+            remoteSettings = try await client.patchSettings(patch)
+            showToast("已同步服务端脱敏配置")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func saveRedactRules(_ rules: [RemoteRedactRule]) async {
+        do {
+            remoteSettings = try await client.updateRedactRules(rules)
+            showToast("已保存自定义脱敏规则")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func saveRedactAllow(_ allow: [String]) async {
+        do {
+            remoteSettings = try await client.updateRedactAllow(allow)
+            showToast("已更新脱敏放行白名单")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func runMaskingPreview(text: String) async {
+        do {
+            maskingPreview = try await client.previewMasking(text: text)
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func clearMaskingRecords() async {
+        do {
+            try await client.clearMaskingRecords()
+            maskingRecords = []
+            maskingSummary = nil
+            showToast("已清空服务端脱敏记录")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func setLANEnabled(_ on: Bool, rotateKey: Bool = false) async {
+        do {
+            remoteSettings = try await client.updateLAN(on: on, newKey: rotateKey)
+            await refreshProviders()
+            showToast(on ? "已开启局域网共享" : "已关闭局域网共享")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func saveAllowIPs(_ rawText: String) async {
+        let ips = rawText
+            .split(whereSeparator: { $0 == "," || $0 == "\n" || $0 == " " })
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        do {
+            remoteSettings = try await client.updateAllowIPs(ips)
+            showToast("已保存 IP 白名单")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func saveBarkConfig(server: String, key: String, daily: String) async {
+        do {
+            remoteSettings = try await client.updateBark(
+                server: server.trimmingCharacters(in: .whitespacesAndNewlines),
+                key: key.isEmpty ? nil : key.trimmingCharacters(in: .whitespacesAndNewlines),
+                daily: daily.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            showToast("已保存 Bark 推送配置")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    func sendBarkTest() async {
+        do {
+            try await client.testBark()
+            showToast("已发送 Bark 测试推送")
+        } catch {
+            recordActionError(error)
+        }
+    }
+
+    // MARK: - Persistence & Helpers
+
+    private func recordActionError(_ error: Error) {
+        let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        lastActionError = msg
+        showToast(msg)
+    }
+
+    private func loadServers() {
+        let decoder = JSONDecoder()
+        if let data = UserDefaults.standard.data(forKey: serversKey),
+           let decoded = try? decoder.decode([MagpieServerProfile].self, from: data) {
+            servers = decoded
+        }
+        if let idStr = UserDefaults.standard.string(forKey: activeServerKey),
+           let uuid = UUID(uuidString: idStr),
+           servers.contains(where: { $0.id == uuid }) {
+            activeServerID = uuid
         } else {
-            MagpieLocalGateway.shared.applyUpstreamConfig(nil)
+            activeServerID = servers.first?.id
+        }
+    }
+
+    private func persistServers() {
+        if let data = try? JSONEncoder().encode(servers) {
+            UserDefaults.standard.set(data, forKey: serversKey)
+        }
+        if let id = activeServerID {
+            UserDefaults.standard.set(id.uuidString, forKey: activeServerKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: activeServerKey)
         }
     }
 }

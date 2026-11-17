@@ -1,126 +1,5 @@
 import Foundation
 
-enum MagpieProtocol: String, CaseIterable, Codable, Identifiable {
-    case openAIChat = "openai-chat"
-    case openAIResponses = "openai-responses"
-    case anthropicMessages = "anthropic-messages"
-    case geminiV1Beta = "gemini-v1beta"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .openAIChat: return "OpenAI Chat"
-        case .openAIResponses: return "OpenAI Responses"
-        case .anthropicMessages: return "Anthropic"
-        case .geminiV1Beta: return "Gemini"
-        }
-    }
-
-    var shortBadge: String {
-        switch self {
-        case .openAIChat: return "Chat"
-        case .openAIResponses: return "Responses"
-        case .anthropicMessages: return "Claude"
-        case .geminiV1Beta: return "Gemini"
-        }
-    }
-
-    var routePath: String {
-        switch self {
-        case .openAIChat: return "/v1/chat/completions"
-        case .openAIResponses: return "/v1/responses"
-        case .anthropicMessages: return "/v1/messages"
-        case .geminiV1Beta: return "/v1beta/models/..."
-        }
-    }
-
-    var suggestedDefaultModel: String {
-        switch self {
-        case .openAIChat: return "gpt-4o"
-        case .openAIResponses: return "gpt-4.1"
-        case .anthropicMessages: return "claude-sonnet-4-5"
-        case .geminiV1Beta: return "gemini-2.5-pro"
-        }
-    }
-
-    func modelsEndpoint(baseURL: String, apiKey: String) -> String {
-        let base = Self.trimTrailingSlashes(baseURL)
-        switch self {
-        case .geminiV1Beta:
-            let encoded = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apiKey
-            return "\(base)/v1beta/models?key=\(encoded)"
-        default:
-            return base.hasSuffix("/v1") ? "\(base)/models" : "\(base)/v1/models"
-        }
-    }
-
-    func chatEndpoint(baseURL: String, model: String, apiKey: String) -> String {
-        let base = Self.trimTrailingSlashes(baseURL)
-        switch self {
-        case .openAIChat:
-            return base.hasSuffix("/v1") ? "\(base)/chat/completions" : "\(base)/v1/chat/completions"
-        case .openAIResponses:
-            return base.hasSuffix("/v1") ? "\(base)/responses" : "\(base)/v1/responses"
-        case .anthropicMessages:
-            return base.hasSuffix("/v1") ? "\(base)/messages" : "\(base)/v1/messages"
-        case .geminiV1Beta:
-            let encoded = apiKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? apiKey
-            return "\(base)/v1beta/models/\(model):generateContent?key=\(encoded)"
-        }
-    }
-
-    func applyAuthHeaders(to request: inout URLRequest, apiKey: String) {
-        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanKey.isEmpty else { return }
-        switch self {
-        case .openAIChat, .openAIResponses:
-            request.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization")
-        case .anthropicMessages:
-            request.setValue(cleanKey, forHTTPHeaderField: "x-api-key")
-            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        case .geminiV1Beta:
-            break
-        }
-    }
-
-    private static func trimTrailingSlashes(_ string: String) -> String {
-        var result = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        while result.hasSuffix("/") {
-            result.removeLast()
-        }
-        return result
-    }
-}
-
-struct MagpieUpstreamConfig: Codable, Equatable {
-    var baseURL: String
-    var apiKey: String
-    var targetProtocol: String
-    var defaultModel: String
-    var profileName: String?
-}
-
-struct ProxyProfile: Codable, Identifiable, Equatable {
-    var id: UUID = UUID()
-    var name: String
-    var baseURL: String
-    var apiKey: String
-    var targetProtocol: MagpieProtocol
-    var defaultModel: String
-    var createdAt: Date = Date()
-    var updatedAt: Date = Date()
-
-    var maskedKeyPreview: String {
-        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return "无密钥" }
-        if trimmed.count <= 8 {
-            return String(repeating: "•", count: trimmed.count)
-        }
-        return "\(trimmed.prefix(4))···\(trimmed.suffix(4))"
-    }
-}
-
 enum URLValidationResult: Equatable {
     case valid(normalized: String)
     case invalid(reason: String)
@@ -140,7 +19,7 @@ enum URLValidator {
     static func validateAndNormalize(_ rawInput: String) -> URLValidationResult {
         var trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return .invalid(reason: "请输入服务器地址（以 http:// 或 https:// 开头）")
+            return .invalid(reason: "请输入 magpie web 地址（以 http:// 或 https:// 开头）")
         }
         if trimmed.contains(where: { $0.isWhitespace }) {
             return .invalid(reason: "服务器地址不能包含空格或换行")
@@ -171,6 +50,8 @@ enum URLValidator {
         var normalized = components
         normalized.scheme = scheme
         normalized.host = host.lowercased()
+        normalized.query = nil
+        normalized.fragment = nil
         if normalized.path == "/" {
             normalized.path = ""
         } else {
@@ -185,6 +66,36 @@ enum URLValidator {
             return .invalid(reason: "无法规范化服务器地址")
         }
         return .valid(normalized: finalString)
+    }
+}
+
+struct ParsedMagpieLink: Equatable {
+    let baseURL: String
+    let webKey: String?
+}
+
+enum MagpieWebLinkParser {
+    /// Parses a full `magpie web` startup link such as `https://host:3430/?k=xxxx`
+    /// into normalized baseURL + extracted `k` key.
+    static func parse(_ rawInput: String) -> ParsedMagpieLink? {
+        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let components = URLComponents(string: trimmed) else {
+            return nil
+        }
+        let extractedKey = components.queryItems?
+            .first(where: { $0.name == "k" })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var baseComponents = components
+        baseComponents.query = nil
+        baseComponents.fragment = nil
+        guard let rawBase = baseComponents.string,
+              case .valid(let normalized) = URLValidator.validateAndNormalize(rawBase) else {
+            return nil
+        }
+        let cleanKey = (extractedKey?.isEmpty == false) ? extractedKey : nil
+        return ParsedMagpieLink(baseURL: normalized, webKey: cleanKey)
     }
 }
 
@@ -207,7 +118,7 @@ struct ConnectionHealth: Equatable {
         kind: .untested,
         latencyMs: nil,
         statusCode: nil,
-        message: "尚未检测连通状态",
+        message: "尚未连接 magpie web 实例",
         checkedAt: nil
     )
 
@@ -215,62 +126,26 @@ struct ConnectionHealth: Equatable {
         kind: .checking,
         latencyMs: nil,
         statusCode: nil,
-        message: "正在握手探测…",
+        message: "正在交换 Cookie 并握手探测…",
         checkedAt: nil
     )
 }
 
-struct MagpieModelItem: Identifiable, Hashable, Codable {
-    var id: String
-    var ownedBy: String
-    var source: String
-}
+struct MagpieServerProfile: Codable, Identifiable, Equatable {
+    var id: UUID = UUID()
+    var name: String
+    var baseURL: String
+    var allowInsecureTLS: Bool = false
+    var createdAt: Date = Date()
+    var updatedAt: Date = Date()
 
-struct PrivacyMaskSettings: Codable, Equatable {
-    var enabled: Bool = true
-    var maskAPIKeys: Bool = true
-    var maskEmails: Bool = true
-    var maskPhones: Bool = true
-    var customKeywordsText: String = ""
-
-    var customKeywords: [String] {
-        customKeywordsText
-            .split(whereSeparator: { $0 == "," || $0 == "\n" || $0 == "，" })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+    var hostLabel: String {
+        guard let url = URL(string: baseURL), let host = url.host else {
+            return baseURL
+        }
+        if let port = url.port {
+            return "\(host):\(port)"
+        }
+        return host
     }
-}
-
-enum GatewayLogOutcome: String, Codable {
-    case forwarded = "upstream"
-    case localLoopback = "local"
-    case error = "error"
-}
-
-struct GatewayLogEntry: Identifiable, Codable, Equatable {
-    var id: UUID
-    var timestamp: Date
-    var method: String
-    var path: String
-    var inboundProtocol: String
-    var targetProtocol: String
-    var model: String
-    var statusCode: Int
-    var latencyMs: Int
-    var upstreamURL: String
-    var maskedCount: Int
-    var outcome: GatewayLogOutcome
-    var errorMessage: String?
-    var requestPreview: String
-    var responsePreview: String
-}
-
-struct GatewayStatusSnapshot: Equatable {
-    var daemonOnline: Bool = false
-    var requestsHandled: Int = 0
-    var successCount: Int = 0
-    var errorCount: Int = 0
-    var maskedItemsCount: Int = 0
-    var listenAddress: String = "http://127.0.0.1:3425"
-    var lastError: String?
 }

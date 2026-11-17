@@ -310,3 +310,30 @@ struct MagpieInputField: View {
         }
     }
 }
+
+struct MagpieProgressBar: View {
+    let ratio: Double // 0.0 ... 1.0
+
+    private var clamped: Double {
+        min(max(ratio, 0.0), 1.0)
+    }
+
+    private var barColor: Color {
+        if clamped >= 0.9 { return MagpieTheme.err }
+        if clamped >= 0.7 { return MagpieTheme.warn }
+        return MagpieTheme.ink
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule(style: .continuous)
+                    .fill(MagpieTheme.surfaceSubtle)
+                Capsule(style: .continuous)
+                    .fill(barColor)
+                    .frame(width: max(clamped > 0 ? 4 : 0, geo.size.width * clamped))
+            }
+        }
+        .frame(height: 5)
+    }
+}
