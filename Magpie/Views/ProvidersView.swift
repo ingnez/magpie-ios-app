@@ -57,17 +57,11 @@ struct ProvidersView: View {
                     Spacer()
                     if sectionTab == .providers {
                         HStack(spacing: Spacing.xs) {
-                            Button("异常总览") {
-                                showingAccountErrors = true
-                            }
-                            .buttonStyle(MagpieButtonStyle(tone: store.accountErrorItems.isEmpty ? .subtle : .danger, compact: true))
-                            .disabled(store.activeServer == nil)
-                            .accessibilityIdentifier("openAccountErrorsButton")
-
                             Button("定价") {
                                 presentingPriceSheet = true
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                            .fixedSize(horizontal: true, vertical: false)
                             .disabled(store.activeServer == nil)
 
                             Button("OAuth 授权") {
@@ -75,6 +69,7 @@ struct ProvidersView: View {
                                 presentingAddSheet = true
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                            .fixedSize(horizontal: true, vertical: false)
                             .disabled(store.activeServer == nil)
 
                             Button("新增") {
@@ -82,6 +77,7 @@ struct ProvidersView: View {
                                 presentingAddSheet = true
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                            .fixedSize(horizontal: true, vertical: false)
                             .disabled(store.activeServer == nil)
                         }
                     } else {
@@ -253,6 +249,14 @@ struct ProvidersView: View {
                 .buttonStyle(.plain)
             }
             Spacer()
+            if store.activeServer != nil {
+                Button(store.accountErrorItems.isEmpty ? "异常总览" : "异常 (\(store.accountErrorItems.count))") {
+                    showingAccountErrors = true
+                }
+                .buttonStyle(MagpieButtonStyle(tone: store.accountErrorItems.isEmpty ? .subtle : .danger, compact: true))
+                .fixedSize(horizontal: true, vertical: false)
+                .accessibilityIdentifier("openAccountErrorsButton")
+            }
         }
     }
 
@@ -490,46 +494,49 @@ struct ProvidersView: View {
             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
             HStack(spacing: Spacing.sm) {
-                Button("管理") { detailSelection = ProviderDetailSelection(providerID: provider.id) }
-                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
-                if let agent = provider.account?.agent, !agent.isEmpty {
-                    Button("授权") {
-                        signingPlatform = SubscriptionCatalog.resolve(
-                            agent: agent,
-                            plugins: store.pluginSubs,
-                            onPlugins: store.onPlugins,
-                            movable: store.movableSubs
-                        )
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Spacing.xs) {
+                        Button("管理") { detailSelection = ProviderDetailSelection(providerID: provider.id) }
+                            .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                        if let agent = provider.account?.agent, !agent.isEmpty {
+                            Button("授权") {
+                                signingPlatform = SubscriptionCatalog.resolve(
+                                    agent: agent,
+                                    plugins: store.pluginSubs,
+                                    onPlugins: store.onPlugins,
+                                    movable: store.movableSubs
+                                )
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        }
+                        Button(testingProviderID == provider.id ? "测连中…" : "测连") {
+                            testingProviderID = provider.id
+                            Task {
+                                testResultsByID[provider.id] = await store.testProvider(provider)
+                                testingProviderID = nil
+                            }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                        .disabled(testingProviderID == provider.id)
+
+                        Button("拉取模型") {
+                            Task { await store.refreshProviderModels(provider) }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                        Button("查余额") {
+                            Task { await store.refreshProviderBalance(provider) }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                     }
-                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                 }
-                Button(testingProviderID == provider.id ? "测连中…" : "测连") {
-                    testingProviderID = provider.id
-                    Task {
-                        testResultsByID[provider.id] = await store.testProvider(provider)
-                        testingProviderID = nil
-                    }
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                .disabled(testingProviderID == provider.id)
-
-                Button("拉取模型") {
-                    Task { await store.refreshProviderModels(provider) }
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-
-                Button("查余额") {
-                    Task { await store.refreshProviderBalance(provider) }
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
-
-                Spacer()
 
                 Button("删除") {
                     pendingDelete = provider
                 }
                 .font(Typography.sectionHeader)
                 .foregroundColor(MagpieTheme.textMuted)
+                .fixedSize(horizontal: true, vertical: false)
                 .buttonStyle(.plain)
             }
         }

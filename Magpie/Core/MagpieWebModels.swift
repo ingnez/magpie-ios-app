@@ -2134,6 +2134,23 @@ struct RemoteTraceTotals: Decodable, Equatable {
     var requests: Int = 0
     var rerouted: Int = 0
     var errors: Int = 0
+
+    enum CodingKeys: String, CodingKey {
+        case requests, rerouted, errors
+    }
+
+    init(requests: Int = 0, rerouted: Int = 0, errors: Int = 0) {
+        self.requests = requests
+        self.rerouted = rerouted
+        self.errors = errors
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requests = try c.decodeIfPresent(Int.self, forKey: .requests) ?? 0
+        rerouted = try c.decodeIfPresent(Int.self, forKey: .rerouted) ?? 0
+        errors = try c.decodeIfPresent(Int.self, forKey: .errors) ?? 0
+    }
 }
 
 struct RemoteRouteGroupRef: Decodable, Equatable {
