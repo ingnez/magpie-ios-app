@@ -347,6 +347,7 @@ final class GatewayStore: ObservableObject {
                 checkedAt: Date()
             )
             lastActionError = msg
+            recomputeAlertsAndWidgetSnapshot(triggerNotifications: false)
         }
     }
 
