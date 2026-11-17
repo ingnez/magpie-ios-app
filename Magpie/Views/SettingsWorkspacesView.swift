@@ -801,7 +801,7 @@ struct ContextTuneView: View {
 
                                     HStack(spacing: 12) {
                                         if let c = adv.compact {
-                                            Button("应用推荐值 (\(c.best))") {
+                                            Button("应用推荐值 (\(String(c.best)))") {
                                                 applyAdvice(agent: agentGroup.agent, knob: adv.knob, model: adv.model ?? "", value: String(c.best))
                                             }
                                         } else if let t = adv.ttl {
