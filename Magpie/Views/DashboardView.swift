@@ -9,6 +9,8 @@ struct DashboardView: View {
     @State private var selectedRoute: RemoteRoute?
     @State private var showingAgents = false
     @State private var showingAccountErrors = false
+    @State private var showingQuotaAlerts = false
+    @State private var quotaAlertsSection: QuotaAlertsSheet.SectionTab = .alerts
 
     enum TraceDisplayMode: String, CaseIterable {
         case live = "实时追踪"
@@ -35,26 +37,53 @@ struct DashboardView: View {
                         Task { await store.connectAndRefreshAll() }
                     }
                 } else {
-                    HStack(spacing: Spacing.sm) {
-                        Button("Agents 与方案") { showingAgents = true }
-                            .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Spacing.sm) {
+                            Button("Agents 与方案") { showingAgents = true }
+                                .buttonStyle(MagpieButtonStyle(tone: .secondary))
 
-                        let errItems = store.accountErrorItems
-                        if !errItems.isEmpty {
                             Button {
-                                showingAccountErrors = true
+                                quotaAlertsSection = .alerts
+                                showingQuotaAlerts = true
                             } label: {
                                 HStack(spacing: Spacing.xs) {
                                     Circle()
-                                        .fill(StatusPalette.err)
+                                        .fill(store.quotaAlerts.isEmpty ? StatusPalette.ok : StatusPalette.warn)
                                         .frame(width: 7, height: 7)
-                                    Text("异常账号 (\(errItems.count))")
+                                    Text(store.quotaAlerts.isEmpty ? "余量预警" : "余量预警 (\(store.quotaAlerts.count))")
                                 }
                             }
-                            .buttonStyle(MagpieButtonStyle(tone: .danger))
-                            .accessibilityIdentifier("dashboardAccountErrorsButton")
+                            .buttonStyle(MagpieButtonStyle(tone: store.quotaAlerts.isEmpty ? .secondary : .danger))
+                            .accessibilityIdentifier("dashboardQuotaAlertsButton")
+
+                            let errItems = store.accountErrorItems
+                            if !errItems.isEmpty {
+                                Button {
+                                    showingAccountErrors = true
+                                } label: {
+                                    HStack(spacing: Spacing.xs) {
+                                        Circle()
+                                            .fill(StatusPalette.err)
+                                            .frame(width: 7, height: 7)
+                                        Text("异常账号 (\(errItems.count))")
+                                    }
+                                }
+                                .buttonStyle(MagpieButtonStyle(tone: .danger))
+                                .accessibilityIdentifier("dashboardAccountErrorsButton")
+                            }
                         }
                     }
+
+                    if let switchRes = store.lastQuickSwitchResult {
+                        QuickSwitchResultBanner(store: store, result: switchRes) {
+                            store.lastQuickSwitchResult = nil
+                        }
+                    }
+
+                    if !store.quotaAlerts.isEmpty {
+                        quotaAlertsOverviewCard
+                    }
+
                     gatewayOverviewSection
                     traceSection
                 }
@@ -68,6 +97,11 @@ struct DashboardView: View {
         }
         .sheet(isPresented: $showingAgents) { AgentsView(store: store) }
         .sheet(isPresented: $showingAccountErrors) { AccountErrorsView(store: store) }
+        .sheet(isPresented: $showingQuotaAlerts) {
+            QuotaAlertsSheet(store: store, initialSection: quotaAlertsSection) {
+                onSwitchTab(.privacy)
+            }
+        }
         .sheet(item: $selectedRoute) { route in
             RouteDetailSheet(store: store, route: route)
         }
@@ -179,6 +213,67 @@ struct DashboardView: View {
                 onOpenNewServer()
             }
             .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+        }
+    }
+
+    private var quotaAlertsOverviewCard: some View {
+        MinimalSection(
+            title: "余量预警与一键切号",
+            trailingText: "阈值 ≤ \(store.alertConfig.defaultRemainingThresholdPercent)%"
+        ) {
+            ForEach(Array(store.quotaAlerts.prefix(2).enumerated()), id: \.element.id) { idx, item in
+                if idx > 0 {
+                    Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                }
+                HStack(spacing: Spacing.sm) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Spacing.xs) {
+                            Text(item.accountDisplayName)
+                                .font(Typography.rowTitleMono)
+                                .foregroundColor(MagpieTheme.ink)
+                                .lineLimit(1)
+                            MagpieTag(
+                                text: String(format: "剩 %.0f%%", item.remainingPercent),
+                                tone: item.severity == .critical ? StatusPalette.err : StatusPalette.warn,
+                                background: item.severity == .critical ? StatusPalette.errSurface : StatusPalette.warnSurface,
+                                monospaced: true
+                            )
+                        }
+                        Text("\(item.providerName) · \(item.windowName)")
+                            .font(Typography.caption)
+                            .foregroundColor(MagpieTheme.textSecondary)
+                    }
+                    Spacer()
+                    if let targetUser = item.recommendedSwitchUser,
+                       let targetDisplay = item.recommendedSwitchDisplay,
+                       let provider = store.providers.first(where: { $0.id == item.providerID }) {
+                        Button(store.isSwitchingAccount ? "切号中" : "切至 \(targetDisplay)") {
+                            Task {
+                                _ = await store.executeQuickSwitch(
+                                    provider: provider,
+                                    targetID: targetUser,
+                                    sourceID: item.accountUser
+                                )
+                            }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                        .disabled(store.isSwitchingAccount)
+                    }
+                }
+            }
+            HStack {
+                Button("查看全部预警与规则") {
+                    quotaAlertsSection = .alerts
+                    showingQuotaAlerts = true
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                Spacer()
+                Button("桌面组件预览") {
+                    quotaAlertsSection = .widget
+                    showingQuotaAlerts = true
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+            }
         }
     }
 

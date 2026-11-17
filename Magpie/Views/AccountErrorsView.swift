@@ -29,6 +29,12 @@ struct AccountErrorsView: View {
                     VStack(alignment: .leading, spacing: Spacing.sectionGap) {
                         summarySection
 
+                        if let res = store.lastQuickSwitchResult {
+                            QuickSwitchResultBanner(store: store, result: res) {
+                                store.lastQuickSwitchResult = nil
+                            }
+                        }
+
                         if !allItems.isEmpty {
                             categoryFilterBar
                         }
@@ -153,11 +159,18 @@ struct AccountErrorsView: View {
     private func errorCard(_ item: AccountErrorItem) -> some View {
         let tone = categoryTone(item.category)
         let surfaceTone = categorySurface(item.category)
+        let provider = store.providers.first(where: { $0.id == item.providerID })
+        let switchPlan = provider.flatMap {
+            store.quickSwitchPlan(for: $0, sourceID: item.accountUser ?? item.keyID)
+        }
+        let targetIdentifier = item.accountUser ?? item.keyID ?? item.providerID
 
-        return Button {
-            store.jumpToAccount(item)
-            dismiss()
-        } label: {
+        return VStack(alignment: .leading, spacing: Spacing.md) {
+            Button {
+                store.jumpToAccount(item)
+                dismiss()
+            } label: {
+                VStack(alignment: .leading, spacing: Spacing.md) {
             VStack(alignment: .leading, spacing: Spacing.md) {
                 HStack(alignment: .top, spacing: Spacing.sm) {
                     Circle()
@@ -242,27 +255,49 @@ struct AccountErrorsView: View {
 
                 Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
-                HStack {
-                    Text(item.accountUser != nil ? "定位到多账号号池" : (item.keyID != nil ? "定位到多 Key 号池" : "定位到供应商概况"))
-                        .font(Typography.captionMedium)
-                        .foregroundColor(MagpieTheme.ink)
-                    Spacer()
-                    Image(systemName: "arrow.right.circle")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(MagpieTheme.ink)
+                    HStack {
+                        Text(item.accountUser != nil ? "定位到多账号号池" : (item.keyID != nil ? "定位到多 Key 号池" : "定位到供应商概况"))
+                            .font(Typography.captionMedium)
+                            .foregroundColor(MagpieTheme.ink)
+                        Spacer()
+                        Image(systemName: "arrow.right.circle")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(MagpieTheme.ink)
+                    }
                 }
             }
-            .padding(Spacing.cardPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(MagpieTheme.surface)
-            .clipShape(RoundedRectangle(cornerRadius: Corners.xl, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: Corners.xl, style: .continuous)
-                    .stroke(tone.opacity(0.35), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("errorAccountRow_\(targetIdentifier)")
+
+            if item.category == .rateLimit || item.category == .quota {
+                if let p = provider, let rec = switchPlan?.recommended {
+                    Button(store.isSwitchingAccount ? "切号中…" : "一键切至可用账号：\(rec.displayName)（\(rec.quotaSummary)）") {
+                        Task {
+                            _ = await store.executeQuickSwitch(
+                                provider: p,
+                                targetID: rec.id,
+                                sourceID: item.accountUser ?? item.keyID
+                            )
+                        }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                    .disabled(store.isSwitchingAccount)
+                    .accessibilityIdentifier("quickSwitchFromError_\(targetIdentifier)")
+                } else {
+                    Text("同平台暂无其他可用账号可切")
+                        .font(Typography.caption)
+                        .foregroundColor(MagpieTheme.textMuted)
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("errorAccountRow_\(item.accountUser ?? item.keyID ?? item.providerID)")
+        .padding(Spacing.cardPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(MagpieTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: Corners.xl, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Corners.xl, style: .continuous)
+                .stroke(tone.opacity(0.35), lineWidth: 1)
+        )
     }
 
     private func categoryTone(_ category: AccountErrorCategory) -> Color {

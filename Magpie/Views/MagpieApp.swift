@@ -48,6 +48,21 @@ struct MagpieApp: App {
             MagpieRootView(store: store)
                 .preferredColorScheme(preferredScheme)
                 .accentColor(MagpieTheme.ink)
+                .onOpenURL { url in
+                    store.handleDeepLink(url)
+                }
+                .onAppear {
+                    MagpieBackgroundRefresh.register {
+                        await store.performBackgroundQuotaRefresh()
+                    }
+                }
+                .onChange(of: scenePhase) { phase in
+                    if phase == .background {
+                        MagpieBackgroundRefresh.scheduleNext()
+                    } else if phase == .active {
+                        Task { await store.refreshNotificationAuthState() }
+                    }
+                }
         }
     }
 }
@@ -56,6 +71,8 @@ struct MagpieRootView: View {
     @ObservedObject var store: GatewayStore
     @State private var selectedTab: MagpieTab = .home
     @State private var presentingNewServer = false
+    @State private var presentingQuotaAlerts = false
+    @State private var quotaAlertsInitialSection: QuotaAlertsSheet.SectionTab = .alerts
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -105,8 +122,39 @@ struct MagpieRootView: View {
                 selectedTab = .providers
             }
         }
+        .onChange(of: store.pendingDeepLink) { link in
+            guard let link = link else { return }
+            store.pendingDeepLink = nil
+            switch link {
+            case .dashboard, .refresh:
+                selectedTab = .home
+            case .usage:
+                selectedTab = .usage
+            case .alerts:
+                selectedTab = .home
+                quotaAlertsInitialSection = .alerts
+                presentingQuotaAlerts = true
+            case .providers(let pid, let hint):
+                selectedTab = .providers
+                if let pid = pid, !pid.isEmpty {
+                    store.pendingAccountJump = AccountJumpTarget(
+                        providerID: pid,
+                        tab: .keys,
+                        accountUser: hint,
+                        keyID: nil
+                    )
+                }
+            }
+        }
         .sheet(isPresented: $presentingNewServer) {
             ServerEditorSheet(store: store, existing: nil)
+        }
+        .sheet(isPresented: $presentingQuotaAlerts) {
+            QuotaAlertsSheet(
+                store: store,
+                initialSection: quotaAlertsInitialSection,
+                onJumpToBark: { selectedTab = .privacy }
+            )
         }
     }
 

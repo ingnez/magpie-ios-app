@@ -526,6 +526,12 @@ struct ProviderDetailSheet: View {
                 }
             }
 
+            if p.account == nil, let switchRes = store.lastQuickSwitchResult, switchRes.providerID == p.id {
+                QuickSwitchResultBanner(store: store, result: switchRes) {
+                    store.lastQuickSwitchResult = nil
+                }
+            }
+
             if p.account == nil || !p.keyList.isEmpty {
                 MinimalSection(title: "API Key 号池 (\(p.keyList.count))", trailingText: p.routing.isEmpty ? "smart" : p.routing) {
                 HStack(spacing: 8) {
@@ -694,9 +700,15 @@ struct ProviderDetailSheet: View {
             }
 
             HStack(spacing: 8) {
-                if !k.active && k.on {
+                if k.rest != nil,
+                   let rec = store.quickSwitchPlan(for: p, sourceID: k.id)?.recommended {
+                    Button("切至 \(rec.displayName)") {
+                        Task { _ = await store.executeQuickSwitch(provider: p, targetID: rec.id, sourceID: k.id) }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                } else if !k.active && k.on {
                     Button("设为优先") {
-                        Task { await store.useProviderKey(providerID: p.id, ref: k.id) }
+                        Task { _ = await store.executeQuickSwitch(provider: p, targetID: k.id) }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                 }

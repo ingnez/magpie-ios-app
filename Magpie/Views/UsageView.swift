@@ -4,6 +4,8 @@ struct UsageView: View {
     @ObservedObject var store: GatewayStore
     @State private var showingAutomation = false
     @State private var showingContextTune = false
+    @State private var showingQuotaAlerts = false
+    @State private var quotaAlertsSection: QuotaAlertsSheet.SectionTab = .alerts
     @State private var confirmClearUsage = false
     @State private var draftStartDate: Date = UsageDateRange.presetLastDays(7).startDate
     @State private var draftEndDate: Date = UsageDateRange.presetLastDays(7).endDate
@@ -61,14 +63,29 @@ struct UsageView: View {
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else {
-                    HStack(spacing: Spacing.sm) {
-                        Button("签到与热身") { showingAutomation = true }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Spacing.sm) {
+                            Button(store.quotaAlerts.isEmpty ? "余量预警" : "余量预警 (\(store.quotaAlerts.count))") {
+                                quotaAlertsSection = .rules
+                                showingQuotaAlerts = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: store.quotaAlerts.isEmpty ? .secondary : .danger, compact: true))
+                            .accessibilityIdentifier("usageQuotaAlertsButton")
+
+                            Button("桌面组件") {
+                                quotaAlertsSection = .widget
+                                showingQuotaAlerts = true
+                            }
                             .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                        Button("上下文调优 (原生)") { showingContextTune = true }
-                            .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                        Spacer()
-                        Button("清空当前统计") { confirmClearUsage = true }
-                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                            .accessibilityIdentifier("usageWidgetPreviewButton")
+
+                            Button("签到与热身") { showingAutomation = true }
+                                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                            Button("上下文调优 (原生)") { showingContextTune = true }
+                                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                            Button("清空当前统计") { confirmClearUsage = true }
+                                .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                        }
                     }
 
                     if let usageErr = store.usageError, !usageErr.isEmpty {
@@ -116,6 +133,9 @@ struct UsageView: View {
         }
         .sheet(isPresented: $showingAutomation) { UsageAutomationView(store: store) }
         .sheet(isPresented: $showingContextTune) { ContextTuneView(store: store) }
+        .sheet(isPresented: $showingQuotaAlerts) {
+            QuotaAlertsSheet(store: store, initialSection: quotaAlertsSection)
+        }
         .alert("清空当前用量统计视图？", isPresented: $confirmClearUsage) {
             Button("清空", role: .destructive) {
                 Task {

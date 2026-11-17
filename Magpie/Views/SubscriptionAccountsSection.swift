@@ -68,6 +68,12 @@ struct SubscriptionAccountsSection: View {
                 codexStaleNotices
             }
 
+            if let switchRes = store.lastQuickSwitchResult, switchRes.providerID == provider.id {
+                QuickSwitchResultBanner(store: store, result: switchRes) {
+                    store.lastQuickSwitchResult = nil
+                }
+            }
+
             MinimalSection(
                 title: "订阅账号池 (\(logins.count))",
                 trailingText: isPriorityMode ? "按顺位优先 · 不限账号数" : "N 账号通用轮询"
@@ -525,17 +531,52 @@ struct SubscriptionAccountsSection: View {
                 }
             }
 
-            if (idx > 0 && login.lapsed == nil && isPriorityMode) || (login.token && !login.uses) {
-                HStack(spacing: Spacing.xs) {
-                    if idx > 0 && login.lapsed == nil && isPriorityMode {
-                        compactRowButton("设为首选", tone: .secondary) {
-                            Task { _ = await store.makeAccountFirst(provider: provider, user: login.user, logins: logins) }
+            let accountAlert = store.quotaAlerts.first(where: {
+                $0.providerID == provider.id && ($0.accountUser?.caseInsensitiveCompare(login.user) == .orderedSame)
+            })
+            let needsQuickEscape = isCoolingWhole || accountAlert != nil
+            let escapePlan = needsQuickEscape ? store.quickSwitchPlan(for: provider, sourceID: login.user) : nil
+            let canPromoteOrSwitch = login.lapsed == nil && !login.paused && (login.on || login.active) && !isCoolingWhole && (idx > 0 || !login.active)
+
+            if canPromoteOrSwitch || escapePlan?.recommended != nil || (login.token && !login.uses) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Spacing.xs) {
+                        if let rec = escapePlan?.recommended {
+                            compactRowButton(store.isSwitchingAccount ? "切号中…" : "一键切至 \(rec.displayName)", tone: .primary) {
+                                Task {
+                                    _ = await store.executeQuickSwitch(
+                                        provider: provider,
+                                        targetID: rec.id,
+                                        sourceID: login.user
+                                    )
+                                }
+                            }
+                            .disabled(store.isSwitchingAccount)
+                            .accessibilityIdentifier("quickSwitchAccountButton_\(login.user)")
+                        } else if needsQuickEscape && logins.count > 1 {
+                            Text("同平台暂无可用替代账号")
+                                .font(Typography.micro)
+                                .foregroundColor(MagpieTheme.textMuted)
                         }
-                    }
-                    if login.token && !login.uses {
-                        compactRowButton("CLI 使用此 Token", tone: .secondary) {
-                            Task {
-                                _ = await store.performLoginAction("switch", agent: agent, user: login.user, toast: "已切换至 \(login.user)")
+
+                        if canPromoteOrSwitch {
+                            compactRowButton(isPriorityMode ? "设为首选" : "切为主用", tone: .secondary) {
+                                Task {
+                                    _ = await store.executeQuickSwitch(
+                                        provider: provider,
+                                        targetID: login.user,
+                                        sourceID: logins.first(where: \.active)?.user
+                                    )
+                                }
+                            }
+                            .disabled(store.isSwitchingAccount)
+                            .accessibilityIdentifier("switchToAccountButton_\(login.user)")
+                        }
+                        if login.token && !login.uses {
+                            compactRowButton("CLI 使用此 Token", tone: .secondary) {
+                                Task {
+                                    _ = await store.performLoginAction("switch", agent: agent, user: login.user, toast: "已切换至 \(login.user)")
+                                }
                             }
                         }
                     }
