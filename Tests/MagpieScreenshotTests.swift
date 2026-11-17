@@ -41,7 +41,7 @@ final class MagpieScreenshotTests: XCTestCase {
             return true
         }
         if scroll {
-            let scroller = app.scrollViews.firstMatch
+            let scroller = app.scrollViews.allElementsBoundByIndex.filter { $0.exists && $0.frame.height > 180 }.last ?? app.scrollViews.firstMatch
             for _ in 0..<18 {
                 if matches.allElementsBoundByIndex.contains(where: visible) { break }
                 let target = matches.allElementsBoundByIndex.first(where: { !$0.frame.isEmpty }) ?? matches.firstMatch
@@ -209,6 +209,7 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("上下文调优", app: app, scroll: true)
         XCTAssertTrue(app.webViews.staticTexts["上下文页签选择通过"].waitForExistence(timeout: 60))
         shot("20-console-context-selection-demo")
+        tap("关闭", app: app)
         tab("providers", app: app)
         tap("OAuth 授权", app: app)
         XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
@@ -220,11 +221,12 @@ final class MagpieScreenshotTests: XCTestCase {
             tap("仍然继续授权", app: app)
         }
         XCTAssertTrue(app.staticTexts["2 个账号"].waitForExistence(timeout: 5))
-        tap("发起浏览器 OAuth 授权登录", app: app)
+        tap("startOAuthButton", app: app, scroll: true)
         XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
         shot("27-antigravity-oauth-demo")
-        let cbField = app.textFields["http://localhost:1455/auth/callback?code=...&state=..."]
+        let cbField = app.textFields["oauthCallbackField"]
         XCTAssertTrue(cbField.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbField.isHittable { app.swipeUp() }
         cbField.tap()
         cbField.typeText("http://127.0.0.1:54321/callback?code=demo-code&state=s1")
         tap("提交并完成登录", app: app, scroll: true)
@@ -241,11 +243,13 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
-        if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
-            tap("解除冷却", app: app, scroll: true)
-        }
         tap("Rotate 逐轮轮询", app: app, scroll: true)
         XCTAssertTrue(app.staticTexts["参与轮询"].waitForExistence(timeout: 10))
+        if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
+            tap("解除冷却", app: app, scroll: true)
+            let unrestDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["解除冷却"])
+            XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
+        }
         shot("28-subscription-multi-account-demo")
         tap("关闭", app: app)
         let signInReq = payload("/api/signin")

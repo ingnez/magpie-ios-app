@@ -255,6 +255,7 @@ struct MagpieInputField: View {
     var keyboardType: UIKeyboardType = .default
     var errorText: String? = nil
     var helperText: String? = nil
+    var accessibilityId: String? = nil
 
     @State private var revealSecret = false
 
@@ -277,6 +278,7 @@ struct MagpieInputField: View {
                 }
                 .font(.system(size: 13.5, design: monospaced ? .monospaced : .default))
                 .foregroundColor(MagpieTheme.ink)
+                .accessibilityIdentifier(accessibilityId ?? placeholder)
 
                 if isSecure {
                     Button {

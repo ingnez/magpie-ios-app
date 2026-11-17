@@ -434,6 +434,7 @@ struct SubscriptionSignInSheet: View {
                         }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .primary))
+                    .accessibilityIdentifier("startOAuthButton")
 
                     if activePlatform.supportsCodexDevice {
                         Button("使用设备码登录 (Device Code)") {
@@ -836,7 +837,8 @@ struct SubscriptionSignInSheet: View {
                                 text: $callbackInput,
                                 isSecure: st.pasteKey,
                                 monospaced: true,
-                                keyboardType: st.pasteCallback ? .URL : .default
+                                keyboardType: st.pasteCallback ? .URL : .default,
+                                accessibilityId: "oauthCallbackField"
                             )
 
                             if let err = errorText {

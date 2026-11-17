@@ -56,11 +56,20 @@ struct SubscriptionAccountsSection: View {
                     .font(.system(size: 12))
                     .foregroundColor(MagpieTheme.textSecondary)
 
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 7) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("优先级模式（顺位为主）")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(MagpieTheme.textMuted)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
                         routingQuickChip(id: "", title: "Smart 智能优先级")
                         routingQuickChip(id: "order", title: "Order 严格顺序")
                         routingQuickChip(id: "drain", title: "Drain 用尽顺延")
+                    }
+                    Text("轮询与均衡模式（多号分流）")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(MagpieTheme.textMuted)
+                        .padding(.top, 2)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
                         routingQuickChip(id: "rotate", title: "Rotate 逐轮轮询")
                         routingQuickChip(id: "weight", title: "Weight 权重轮询")
                         routingQuickChip(id: "usage", title: "Usage 最少已用")
