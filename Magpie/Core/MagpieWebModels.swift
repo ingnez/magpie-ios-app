@@ -1885,9 +1885,12 @@ struct RemoteCallerKey: Decodable, Identifiable, Equatable {
     let off: Bool
     let allModels: Bool
     let models: [String]
+    let limit: RemoteCallerLimit?
+    let used: RemoteCallerUsage?
+    let readOnly: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, name, masked, off, allModels, models
+        case id, name, masked, off, allModels, models, limit, used, readOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -1896,6 +1899,9 @@ struct RemoteCallerKey: Decodable, Identifiable, Equatable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
         masked = try c.decodeIfPresent(String.self, forKey: .masked) ?? ""
         off = try c.decodeIfPresent(Bool.self, forKey: .off) ?? false
+        limit = try c.decodeIfPresent(RemoteCallerLimit.self, forKey: .limit)
+        used = try c.decodeIfPresent(RemoteCallerUsage.self, forKey: .used)
+        readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
         allModels = try c.decodeIfPresent(Bool.self, forKey: .allModels) ?? false
         models = try c.decodeIfPresent([String].self, forKey: .models) ?? []
     }

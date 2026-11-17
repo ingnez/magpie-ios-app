@@ -4,6 +4,10 @@ struct LogsPrivacyView: View {
     @ObservedObject var store: GatewayStore
     @Binding var presentingNewServer: Bool
 
+    @State private var showingCallerKeys = false
+    @State private var showingRules = false
+    @State private var selectedRecord: RemoteMaskingRecord?
+    @State private var confirmClearRecords = false
     @State private var editingServer: MagpieServerProfile?
     @State private var serverPendingDelete: MagpieServerProfile?
 
@@ -27,6 +31,10 @@ struct LogsPrivacyView: View {
                 serversSection
 
                 if store.activeServer != nil {
+                    HStack {
+                        Button("Caller Keys 管理") { showingCallerKeys = true }
+                        Button("正则与敏感词") { showingRules = true }
+                    }.buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                     maskingControlSection
                     maskingPreviewSection
                     maskingRecordsSection
@@ -36,6 +44,13 @@ struct LogsPrivacyView: View {
             .padding(.horizontal, 22)
             .padding(.top, 24)
             .padding(.bottom, 100)
+        }
+        .sheet(isPresented: $showingCallerKeys) { CallerKeysView(store: store) }
+        .sheet(isPresented: $showingRules) { MaskingRulesEditor(store: store) }
+        .sheet(item: $selectedRecord) { record in MaskingRecordDetail(store: store, record: record) }
+        .alert("清空服务端脱敏记录？", isPresented: $confirmClearRecords) {
+            Button("清空", role: .destructive) { Task { await store.clearMaskingRecords() } }
+            Button("取消", role: .cancel) {}
         }
         .onAppear {
             syncLocalFieldDrafts()
@@ -351,7 +366,7 @@ struct LogsPrivacyView: View {
                 HStack {
                     Spacer()
                     Button("清空服务端记录") {
-                        Task { await store.clearMaskingRecords() }
+                        confirmClearRecords = true
                     }
                     .font(.system(size: 12))
                     .foregroundColor(MagpieTheme.textMuted)
@@ -381,6 +396,8 @@ struct LogsPrivacyView: View {
                                 MagpieTag(text: "脱敏 \(rec.n) 处")
                             }
                         }
+                        Button("查看前后对照") { selectedRecord = rec }
+                            .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
                         if !rec.values.isEmpty {
                             Text(rec.values.map { "\($0.k)(\($0.b))" }.joined(separator: " · "))
                                 .font(.system(size: 11.5))

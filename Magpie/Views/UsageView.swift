@@ -2,6 +2,7 @@ import SwiftUI
 
 struct UsageView: View {
     @ObservedObject var store: GatewayStore
+    @State private var showingAutomation = false
 
     private let periods: [(id: String, title: String)] = [
         ("today", "今日"),
@@ -42,7 +43,10 @@ struct UsageView: View {
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else {
+                    Button("签到与热身") { showingAutomation = true }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     usageSummarySection
+                    UsageTrendView(series: store.usageSummary?.series ?? [])
                     quotasSection
                     if let summary = store.usageSummary {
                         if !summary.models.isEmpty {
@@ -58,6 +62,7 @@ struct UsageView: View {
             .padding(.top, 24)
             .padding(.bottom, 100)
         }
+        .sheet(isPresented: $showingAutomation) { UsageAutomationView(store: store) }
         .onAppear {
             if store.activeServer != nil {
                 if store.usageSummary == nil {
