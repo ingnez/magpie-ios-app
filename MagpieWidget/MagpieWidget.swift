@@ -184,6 +184,11 @@ struct MagpieWidgetEntryView: View {
                     .foregroundColor(WidgetPalette.muted)
                 Spacer()
             } else {
+                if isOfflineOrStale {
+                    Text("缓存 · \(formattedTime(snap.updatedAt))")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(WidgetPalette.warn)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(snap.todayCalls) 次调用")
                         .font(.system(size: 16, weight: .semibold, design: .monospaced))

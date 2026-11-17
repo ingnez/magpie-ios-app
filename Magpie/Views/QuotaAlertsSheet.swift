@@ -31,7 +31,7 @@ struct QuickSwitchResultBanner: View {
                     .accessibilityIdentifier("undoQuickSwitchButton")
                 }
                 if let onDismiss = onDismiss {
-                    Button("关闭") { onDismiss() }
+                    Button("收起反馈") { onDismiss() }
                         .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textMuted)
                 }
@@ -551,7 +551,9 @@ struct QuotaAlertsSheet: View {
                         .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("• 服务端实时推送依赖：如需 24 小时稳定锁屏提醒，须由 Magpie 服务端主动触发推送。可通过支持 Bark 的 Magpie 服务端与 Bark 客户端配置推送（当前读取状态：\(store.remoteSettings.barkKeySet ? "已配置 Key" : "未配置 Key")，服务端用量告警阈值 \(store.remoteSettings.usageAlert)%），也可在后续版本扩展服务端 APNs 推送网关。")
+                    Text(store.remoteSettings.supportsRemoteBark
+                         ? "• 服务端推送：此服务端返回了 Bark 配置字段。须另行配置 Bark 客户端与服务端 Key，送达仍取决于服务端告警实现。客户端本地阈值不会自动写入服务端。"
+                         : "• 当前服务端未返回 Bark/告警能力字段，不能确认支持实时推送。需升级或核实服务端能力，再配置 Bark；APNs 直推也需要独立的服务端推送通道。客户端本地阈值不会自动写入服务端。")
                         .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

@@ -229,7 +229,12 @@ extension GatewayStore {
                 if let state = try? await client.fetchProviders(), let current = state.providers.first(where: { $0.id == before.id }) {
                     let originalIDs = Set(before.account?.logins.map(\.user) ?? before.keyList.map(\.id))
                     let currentIDs = Set(current.account?.logins.map(\.user) ?? current.keyList.map(\.id))
-                    if originalIDs == currentIDs {
+                    let oldOrder = before.account?.logins.map(\.user)
+                    let attemptedOrder = oldOrder.map { [targetID] + $0.filter { $0.caseInsensitiveCompare(targetID) != .orderedSame } }
+                    let safeToRestore = oldOrder == nil
+                        ? [targetID, before.keyList.first(where: \.active)?.id ?? ""].contains(current.keyList.first(where: \.active)?.id ?? "")
+                        : (current.account?.logins.map(\.user) == attemptedOrder || current.account?.logins.map(\.user) == oldOrder)
+                    if originalIDs == currentIDs && safeToRestore {
                         if let order = before.account?.logins.map(\.user) {
                             _ = try? await client.arrangeProviderAccounts(id: before.id, accountOrder: order)
                         } else if let old = before.keyList.first(where: \.active)?.id {
@@ -305,7 +310,9 @@ extension GatewayStore {
         do {
             await configureClientForActiveServer()
             _ = try await client.probeAndFetchState(forceReauth: false)
+            try Task.checkCancellation()
             await refreshProviders()
+            try Task.checkCancellation()
             await refreshAllLoginUsagesForSubscriptionProviders()
             await refreshQuotas(asked: false, all: false)
             if let today = try? await client.fetchUsage(period: "today") {
@@ -315,6 +322,7 @@ extension GatewayStore {
                     usageSummary = today
                 }
             }
+            try Task.checkCancellation()
             recomputeAlertsAndWidgetSnapshot(triggerNotifications: true)
             return true
         } catch {

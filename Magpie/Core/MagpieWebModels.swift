@@ -469,6 +469,8 @@ struct RemoteSettingsState: Decodable, Equatable {
     var requestArchiveLocal: Bool = false
 
     // Allowances & Alerts (internal/settings/settings.go)
+    var supportsRemoteAlerts: Bool = false
+    var supportsRemoteBark: Bool = false
     var quotaLeft: Bool = false
     var quotaReads: String = ""
     var usageAlert: Int = 0
@@ -606,6 +608,8 @@ struct RemoteSettingsState: Decodable, Equatable {
         requestArchive = try c.decodeIfPresent(Bool.self, forKey: .requestArchive) ?? false
         requestArchiveLocal = try c.decodeIfPresent(Bool.self, forKey: .requestArchiveLocal) ?? false
 
+        supportsRemoteAlerts = c.contains(.usageAlert)
+        supportsRemoteBark = c.contains(.barkKeySet) || c.contains(.barkServer)
         quotaLeft = try c.decodeIfPresent(Bool.self, forKey: .quotaLeft) ?? false
         quotaReads = try c.decodeIfPresent(String.self, forKey: .quotaReads) ?? ""
         usageAlert = try c.decodeIfPresent(Int.self, forKey: .usageAlert) ?? 0
