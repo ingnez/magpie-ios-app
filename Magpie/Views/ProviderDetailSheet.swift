@@ -145,6 +145,7 @@ struct ProviderDetailSheet: View {
                         .padding(20)
                         .padding(.bottom, 40)
                     }
+                    .accessibilityIdentifier("providerDetailScrollView")
                 }
                 .onAppear {
                     syncDrafts(from: p)

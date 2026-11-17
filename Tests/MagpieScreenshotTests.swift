@@ -213,7 +213,11 @@ final class MagpieScreenshotTests: XCTestCase {
         tab("providers", app: app)
         try exerciseOAuthAccounts(app: app, server: server)
 
-        let provider = payload("/api/provider/save")
+        let demoProviderSave = server.requests().last {
+            ($0["path"] as? String == "/api/provider/save") &&
+            (($0["body"] as? [String: Any])?["id"] as? String == "demo")
+        }
+        let provider = (demoProviderSave?["body"] as? [String: Any]) ?? [:]
         XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
         XCTAssertEqual(provider["models"] as? [String], ["gpt-demo"])
         XCTAssertEqual((provider["contexts"] as? [String: Int])?["gpt-demo"], 128000)
@@ -410,9 +414,10 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
-        let scroller = app.scrollViews.allElementsBoundByIndex.filter { $0.exists && $0.frame.height > 180 }.last ?? app.scrollViews.firstMatch
-        for _ in 0..<4 where !app.staticTexts["demo4@gmail.com"].exists { scroller.swipeUp() }
-        XCTAssertTrue(app.staticTexts["demo4@gmail.com"].waitForExistence(timeout: 5))
+        let scroller = app.scrollViews["providerDetailScrollView"]
+        XCTAssertTrue(scroller.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !scroller.staticTexts["accountTitle_demo4@gmail.com"].exists { scroller.swipeUp() }
+        XCTAssertTrue(scroller.staticTexts["accountTitle_demo4@gmail.com"].waitForExistence(timeout: 5))
 
         // Scroll back to top of account pool
         for _ in 0..<4 where !app.buttons["configureMaxAccountsButton"].isHittable { scroller.swipeDown() }
@@ -444,7 +449,7 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [capCleared], timeout: 10), .completed)
 
         // Test weight setting on 3rd account (demo3@gmail.com)
-        let settingsButtons = app.buttons.matching(identifier: "设置")
+        let settingsButtons = scroller.buttons.matching(identifier: "设置")
         XCTAssertGreaterThanOrEqual(settingsButtons.count, 3)
         let thirdSettings = settingsButtons.element(boundBy: 2)
         for _ in 0..<4 where !thirdSettings.isHittable { scroller.swipeUp() }
@@ -478,9 +483,8 @@ final class MagpieScreenshotTests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
         }
         func accountVisible(_ email: String) -> Bool {
-            scroller.staticTexts.matching(identifier: email).allElementsBoundByIndex.contains {
-                $0.exists && $0.isHittable
-            }
+            let el = scroller.staticTexts["accountTitle_\(email)"]
+            return el.exists && el.isHittable
         }
         for _ in 0..<5 where !accountVisible("demo1@gmail.com") { scroller.swipeDown() }
         XCTAssertTrue(accountVisible("demo1@gmail.com"))
@@ -499,7 +503,7 @@ final class MagpieScreenshotTests: XCTestCase {
         alertRemove.tap()
         let removedDone = XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "count == 0"),
-            object: scroller.staticTexts.matching(identifier: "demo4@gmail.com")
+            object: scroller.staticTexts.matching(identifier: "accountTitle_demo4@gmail.com")
         )
         XCTAssertEqual(XCTWaiter.wait(for: [removedDone], timeout: 10), .completed)
 

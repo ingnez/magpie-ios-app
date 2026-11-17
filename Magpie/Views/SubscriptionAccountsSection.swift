@@ -327,6 +327,7 @@ struct SubscriptionAccountsSection: View {
                             .font(.system(size: 13.5, weight: .semibold, design: (alias?.isEmpty == false) ? .default : .monospaced))
                             .foregroundColor(MagpieTheme.ink)
                             .lineLimit(1)
+                            .accessibilityIdentifier("accountTitle_\(login.user)")
                         if login.lapsed != nil {
                             MagpieTag(text: "登录失效", tone: MagpieTheme.err)
                         } else if login.paused {
