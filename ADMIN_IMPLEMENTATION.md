@@ -71,3 +71,5 @@ iOS 正式编译和模拟器 UI 检查分别由 `.github/workflows/build-ipa.yml
 - Caller Key 原生额度编辑覆盖日/周/月的 Token/美元规则；修改额度时替换该 Key 的额度规则，页面已提示。复杂多规则额度仍可在原版 Gateway 页面操作。
 - 脱敏前对照依赖服务器仍保留发送体及原值映射；重启或过期后可能不可恢复。
 - 2026-11-17 在构建宿主机执行 `curl -I --connect-timeout 8 --max-time 12 https://magpie.163ll.com` 返回 `curl: (28) Connection timeout after 8000 ms`，生产实例鉴权、供应商变更及第三批实际业务操作尚未完成在线联调。
+
+- 原版备份导出将加密文件写到服务器的 Downloads，页面显示服务器路径；它本身不是 iPhone 文件下载接口。WebKit 分享面板适用于原版确实返回下载文件的接口。

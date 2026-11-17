@@ -8,7 +8,6 @@ struct RemoteConsoleView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var session: ConsoleSession?
     @State private var error: String?
-    @State private var downloading = false
     @State private var downloaded: ConsoleDownload?
     @State private var external: ConsoleExternalURL?
     @State private var reload = UUID()
@@ -117,7 +116,9 @@ private struct ConsoleWebView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { decisionHandler(.cancel); return }
-            if sameConsoleOrigin(url, parent.session.base) {
+            if url.scheme == "blob", let origin = URL(string: String(url.absoluteString.dropFirst(5))), sameConsoleOrigin(origin, parent.session.base) {
+                decisionHandler(.download)
+            } else if sameConsoleOrigin(url, parent.session.base) {
                 decisionHandler(action.shouldPerformDownload ? .download : .allow)
             } else if url.absoluteString == "about:blank" { decisionHandler(.allow) }
             else {

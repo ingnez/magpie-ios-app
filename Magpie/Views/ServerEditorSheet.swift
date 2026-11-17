@@ -74,13 +74,7 @@ struct ServerEditorSheet: View {
                                 errorText: urlErrorText,
                                 helperText: urlHelperText
                             )
-                            .onChange(of: rawURL) { newValue in
-                                if let parsed = MagpieWebLinkParser.parse(newValue),
-                                   let k = parsed.webKey,
-                                   webKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                    webKey = k
-                                }
-                            }
+
 
                             MagpieInputField(
                                 label: "访问密钥 k（MAGPIE_WEB_KEY）",

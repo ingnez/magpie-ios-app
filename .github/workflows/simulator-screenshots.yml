@@ -40,6 +40,8 @@ jobs:
           fi
           mkdir -p MagpieUITests
           cp Tests/MagpieScreenshotTests.swift MagpieUITests/MagpieScreenshotTests.swift
+          cp Tests/FixtureHTTPServer.swift MagpieUITests/FixtureHTTPServer.swift
+          python3 -c 'import json,sys; sys.path.insert(0,"Tests"); import mock_server; json.dump(mock_server.RESPONSES,open("MagpieUITests/mock-responses.json","w"))'
 
           python3 -c '
           with open("project.yml", "r") as f:
@@ -91,9 +93,6 @@ jobs:
             -resultBundlePath build/TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/xcodebuild-test.log
-
-      - name: Verify UI request contracts
-        run: python3 Tests/verify_ui_requests.py
 
       - name: Extract PNG screenshots from xcresult
         if: always()

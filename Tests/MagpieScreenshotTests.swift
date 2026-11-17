@@ -1,6 +1,8 @@
 import XCTest
 
 final class MagpieScreenshotTests: XCTestCase {
+    private var fixture: FixtureHTTPServer?
+    override func tearDown() { fixture?.stop(); fixture = nil; super.tearDown() }
     private func shot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
@@ -21,7 +23,9 @@ final class MagpieScreenshotTests: XCTestCase {
     }
     private func tab(_ id: String, app: XCUIApplication) { tap("tab.\(id)", app: app) }
 
-    func testCaptureAllTabs() {
+    func testCaptureAllTabs() throws {
+        let server = try FixtureHTTPServer()
+        fixture = server
         let app = XCUIApplication()
         app.launch()
         tap("连接 magpie web", app: app)
@@ -29,7 +33,7 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 5))
         name.tap(); name.typeText("演示实例 · 本地测试数据")
         let address = app.textFields["https://your-host:3430/?k=..."]
-        address.tap(); address.typeText("http://127.0.0.1:8773/?k=fixture-only-not-a-real-key")
+        address.tap(); address.typeText("http://127.0.0.1:\(server.port)/?k=fixture-only-not-a-real-key")
         shot("01-server-editor-demo")
         tap("保存并连接", app: app)
         XCTAssertTrue(app.staticTexts["1 模型在线"].waitForExistence(timeout: 20))
@@ -93,5 +97,22 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("Sessions", app: app, scroll: true)
         XCTAssertTrue(app.webViews.staticTexts["Cookie 会话验证通过"].waitForExistence(timeout: 15))
         shot("19-console-cookie-integration-demo")
+        let requests = server.requests()
+        func payload(_ path: String) -> [String: Any] {
+            let row = requests.last { $0["path"] as? String == path }
+            XCTAssertNotNil(row, "UI must call \(path)")
+            return row?["body"] as? [String: Any] ?? [:]
+        }
+        let provider = payload("/api/provider/save")
+        XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
+        XCTAssertEqual(provider["models"] as? [String], ["gpt-demo"])
+        XCTAssertEqual((provider["contexts"] as? [String: Int])?["gpt-demo"], 128000)
+        let group = payload("/api/groups/save")
+        XCTAssertNotNil((group["rules"] as? [[String: Any]])?.first?["where"])
+        XCTAssertEqual(payload("/api/groups/copy")["id"] as? String, "coding")
+        XCTAssertEqual(payload("/api/masking/values")["ps"] as? [String], ["{{EMAIL_demo}}"])
+        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: requests), uniformTypeIdentifier: "public.json")
+        attachment.name = "UI API requests"; attachment.lifetime = .keepAlways; add(attachment)
+
     }
 }
