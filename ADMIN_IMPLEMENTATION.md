@@ -9,7 +9,7 @@
 | 供应商详情 | 概况、连接测试、余额、多 Key 号池、调度策略、粘性、高级配置 | 供应商 → 管理；`ProviderDetailSheet.swift` |
 | Key 号池 | 新增、批量导入、启停、优先使用、重命名、替换、权重、协议和限定模型 | 供应商 → 管理 → 多 Key 号池 |
 | 模型 | 模型选择、同系列最新、别名、推理档位、图片能力 | 供应商 → 管理 → 模型管理 |
-| 路由组 | 新建、编辑、复制、删除、成员顺序、自动归组、规则、超时、上下文 | 供应商 → 路由组；`GroupEditorSheet.swift` |
+| 路由组 | 新建、编辑、复制、删除、成员顺序、自动归组、规则、超时、上下文 | 供应商 → 路由组；`GroupEditorSheet.swift`、`CopyGroupSheet.swift` |
 | Agents | 服务器上的客户端扫描、接入/断开、字段选择、Fast、可见模型、遥测与方案管理 | 总览 → Agents 与方案；`AgentsView.swift` |
 | Caller Keys | 新增、改名、启停、轮换、删除、模型范围、只读权限、日/周/月 Token 与美元预算 | 隐私与设置 → Caller Keys 管理；`CallerKeysView.swift` |
 | 隐私规则 | 前缀/正则、敏感词、忽略大小写、整词匹配、规则提醒/拦截、白名单、服务端预览 | 隐私与设置 → 正则与敏感词；`MaskingEditors.swift` |
@@ -29,7 +29,7 @@
 | Library | `?mode=window&view=library` |
 | Plugins | `?mode=window&view=plugins` |
 | 模型定价 | `?mode=window&view=providers`，进入供应商模型定价编辑 |
-| 上下文调优 | `?mode=window&view=usage&tab=context` |
+| 上下文调优 | `?mode=window&view=usage&tab=context`，加载前按原版 `magpie.usageTab=context` 选择上下文页签（原版忽略该 tab 参数） |
 
 控制台继续使用服务器提供的界面和确认流程，下载交给 iOS 分享面板，文件上传沿用 WebKit 选择器。服务器缺少或关闭的原版插件不会被 iOS 客户端补造。
 
@@ -62,7 +62,7 @@ python3 Tests/mock_server.py
 python3 Tests/fixture_smoke.py
 ```
 
-iOS 正式编译和模拟器 UI 检查分别由 `.github/workflows/build-ipa.yml`、`simulator-screenshots.yml` 执行。截图使用 `Tests/mock_server.py` 提供的演示数据，不代表已连接生产实例。
+iOS 正式编译和模拟器 UI 检查分别由 `.github/workflows/build-ipa.yml`、`simulator-screenshots.yml` 执行。截图使用 `Tests/mock_server.py` 定义的演示数据，在模拟器测试进程内由 `FixtureHTTPServer.swift` 提供，不代表已连接生产实例。
 
 ## 已知边界
 
@@ -71,5 +71,11 @@ iOS 正式编译和模拟器 UI 检查分别由 `.github/workflows/build-ipa.yml
 - Caller Key 原生额度编辑覆盖日/周/月的 Token/美元规则；修改额度时替换该 Key 的额度规则，页面已提示。复杂多规则额度仍可在原版 Gateway 页面操作。
 - 脱敏前对照依赖服务器仍保留发送体及原值映射；重启或过期后可能不可恢复。
 - 2026-11-17 在构建宿主机执行 `curl -I --connect-timeout 8 --max-time 12 https://magpie.163ll.com` 返回 `curl: (28) Connection timeout after 8000 ms`，生产实例鉴权、供应商变更及第三批实际业务操作尚未完成在线联调。
-
 - 原版备份导出将加密文件写到服务器的 Downloads，页面显示服务器路径；它本身不是 iPhone 文件下载接口。WebKit 分享面板适用于原版确实返回下载文件的接口。
+
+## 模拟器回归修正
+
+- 截图测试服务在模拟器测试进程内监听独立端口，排除 CI 宿主机回环隔离；登录仍走真实客户端的 Cookie 交换。
+- 复制路由组使用独立表单状态，避免父页面首次展示 sheet 时名称已填入、按钮仍取旧空值的问题；提交期间防重复，错误留在当前表单。
+- UI 自动化只点击当前可见且启用的按钮，等待复制表单消失后再切换主页面；断言失败立即停止。
+- 控制台上下文入口预置非持久化 WebKit 中的原版页签偏好，不注入密钥；模拟器校验 Cookie 共享与上下文页签选择。

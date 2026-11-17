@@ -73,6 +73,11 @@ private struct ConsoleWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
+        if destination == .tuning {
+            // The upstream page reads this preference but ignores tab=context.
+            let script = "try { localStorage.setItem(\"magpie.usageTab\", \"context\"); } catch {}"
+            configuration.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         let web = WKWebView(frame: .zero, configuration: configuration)
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator

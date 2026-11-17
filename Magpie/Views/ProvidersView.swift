@@ -12,7 +12,6 @@ struct ProvidersView: View {
     @State private var editingGroup: RemoteRoutingGroup?
     @State private var creatingGroup = false
     @State private var copyingGroup: RemoteRoutingGroup?
-    @State private var copyName = ""
     @State private var pendingGroupDelete: RemoteRoutingGroup?
 
     enum ProviderSectionTab: String, CaseIterable {
@@ -118,18 +117,7 @@ struct ProvidersView: View {
             GroupEditorSheet(store: store, existing: nil)
         }
         .sheet(item: $copyingGroup) { group in
-            NavigationView {
-                Form {
-                    TextField("副本名称", text: $copyName)
-                    Button("创建副本") {
-                        Task {
-                            if await store.copyGroup(group, newName: copyName) { copyingGroup = nil }
-                        }
-                    }.disabled(copyName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .navigationTitle("复制路由组")
-                .toolbar { Button("取消") { copyingGroup = nil } }
-            }
+            CopyGroupSheet(store: store, group: group)
         }
         .alert("删除路由组？", isPresented: Binding(get: { pendingGroupDelete != nil }, set: { if !$0 { pendingGroupDelete = nil } })) {
             Button("删除", role: .destructive) {
@@ -352,7 +340,7 @@ struct ProvidersView: View {
                     Button("编辑") { editingGroup = group }
                         .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                 }
-                Button("复制") { copyName = group.name + " 副本"; copyingGroup = group }
+                Button("复制") { copyingGroup = group }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                 Spacer()
                 if !group.auto {

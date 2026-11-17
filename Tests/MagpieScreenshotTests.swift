@@ -2,6 +2,7 @@ import XCTest
 
 final class MagpieScreenshotTests: XCTestCase {
     private var fixture: FixtureHTTPServer?
+    override func setUp() { super.setUp(); continueAfterFailure = false }
     override func tearDown() { fixture?.stop(); fixture = nil; super.tearDown() }
     private func shot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
@@ -10,15 +11,22 @@ final class MagpieScreenshotTests: XCTestCase {
         add(attachment)
     }
     private func tap(_ title: String, app: XCUIApplication, scroll: Bool = false) {
-        let button = app.buttons[title].firstMatch
-        XCTAssertTrue(button.waitForExistence(timeout: 10), "Missing button: \(title)")
+        let matches = app.buttons.matching(identifier: title)
+        XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button: \(title)")
         if scroll {
             for _ in 0..<12 {
-                if button.isHittable { break }
+                if matches.allElementsBoundByIndex.contains(where: { $0.isHittable }) { break }
                 app.swipeUp()
             }
         }
-        XCTAssertTrue(button.isHittable, "Not hittable: \(title)")
+        // Nested sheets expose their covered parent's buttons under the same label.
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            matches.allElementsBoundByIndex.contains { $0.isHittable && $0.isEnabled }
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed, "No enabled visible button: \(title)")
+        guard let button = matches.allElementsBoundByIndex.first(where: { $0.isHittable && $0.isEnabled }) else {
+            XCTFail("Button disappeared: \(title)"); return
+        }
         button.tap()
     }
     private func tab(_ id: String, app: XCUIApplication) { tap("tab.\(id)", app: app) }
@@ -68,8 +76,14 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("保存", app: app)
         XCTAssertTrue(app.buttons["复制"].waitForExistence(timeout: 10))
         tap("复制", app: app)
+        XCTAssertEqual(app.textFields["副本名称"].value as? String, "编程组演示 副本")
+        XCTAssertTrue(app.buttons["创建副本"].isEnabled, "The prefilled copy name must enable creation on first presentation")
         shot("12-copy-group-demo")
         tap("创建副本", app: app)
+        let copied = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !app.textFields["副本名称"].exists
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [copied], timeout: 15), .completed)
 
         tab("usage", app: app)
         XCTAssertTrue(app.staticTexts["用量趋势"].waitForExistence(timeout: 10))
@@ -85,7 +99,7 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("编辑名称、模型权限与预算", app: app)
         shot("16-caller-key-editor-demo")
         tap("取消", app: app); tap("关闭", app: app)
-        tap("正则与敏感词", app: app)
+        tap("正则与敏感词", app: app, scroll: true)
         shot("17-masking-rules-demo")
         tap("关闭", app: app)
         tap("查看前后对照", app: app, scroll: true)
@@ -97,6 +111,10 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("Sessions", app: app, scroll: true)
         XCTAssertTrue(app.webViews.staticTexts["Cookie 会话验证通过"].waitForExistence(timeout: 15))
         shot("19-console-cookie-integration-demo")
+        tap("关闭", app: app)
+        tap("上下文调优", app: app, scroll: true)
+        XCTAssertTrue(app.webViews.staticTexts["上下文页签选择通过"].waitForExistence(timeout: 15))
+        shot("20-console-context-selection-demo")
         let requests = server.requests()
         func payload(_ path: String) -> [String: Any] {
             let row = requests.last { $0["path"] as? String == path }
@@ -110,9 +128,9 @@ final class MagpieScreenshotTests: XCTestCase {
         let group = payload("/api/groups/save")
         XCTAssertNotNil((group["rules"] as? [[String: Any]])?.first?["where"])
         XCTAssertEqual(payload("/api/groups/copy")["id"] as? String, "coding")
+        XCTAssertEqual(payload("/api/groups/copy")["name"] as? String, "编程组演示 副本")
         XCTAssertEqual(payload("/api/masking/values")["ps"] as? [String], ["{{EMAIL_demo}}"])
         let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: requests), uniformTypeIdentifier: "public.json")
         attachment.name = "UI API requests"; attachment.lifetime = .keepAlways; add(attachment)
-
     }
 }

@@ -68,7 +68,7 @@ final class FixtureHTTPServer {
         guard headers.contains("magpie_web_fixture=test-session") else { json(connection, ["error": "Cookie required"], status: 401); return }
         if method == "GET" {
             if path == "/" {
-                let html = "<!doctype html><meta name='viewport' content='width=device-width'><h1>控制台联调演示</h1><p>Cookie 会话验证通过</p>"
+                let html = "<!doctype html><meta name='viewport' content='width=device-width'><h1>控制台联调演示</h1><p>Cookie 会话验证通过</p><p id=tab></p><script>if(localStorage.getItem('magpie.usageTab')==='context')document.getElementById('tab').textContent='上下文页签选择通过'</script>"
                 send(connection, Data(html.utf8), type: "text/html; charset=utf-8"); return
             }
             guard let value = responses[path] else { json(connection, ["error": "unknown GET: \(path)"], status: 404); return }
