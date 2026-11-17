@@ -324,7 +324,7 @@ struct ProvidersView: View {
                 } else if let acc = provider.account {
                     if !acc.logins.isEmpty {
                         let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
-                        MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.info)
+                        MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.ink)
                     }
                     if let user = acc.user, !user.isEmpty {
                         MagpieTag(text: user)
@@ -817,7 +817,7 @@ private struct AddProviderSheet: View {
                             MagpieTag(text: "\(count) 账号", tone: MagpieTheme.ok)
                         }
                         if platform.isPluginBacked {
-                            MagpieTag(text: "插件", tone: MagpieTheme.info)
+                            MagpieTag(text: "插件", tone: MagpieTheme.ink)
                         }
                         if platform.risk {
                             MagpieTag(text: "风控", tone: MagpieTheme.warn)

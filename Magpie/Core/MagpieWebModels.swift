@@ -1410,7 +1410,7 @@ struct RemoteExcludedAccount: Decodable, Identifiable, Equatable {
     }
 }
 
-struct RemoteQuotaWindow: Decodable, Identifiable, Equatable {
+struct RemoteLoginQuotaWindow: Decodable, Identifiable, Equatable {
     var id: String { "\(name)|\(capId ?? "")|\(pool ?? "")|\(family ?? "")" }
     let unlimited: Bool
     let name: String
@@ -1473,7 +1473,7 @@ struct RemoteLoginQuota: Decodable, Equatable {
     let plan: String?
     let accessSku: String?
     let user: String?
-    let windows: [RemoteQuotaWindow]
+    let windows: [RemoteLoginQuotaWindow]
     let balance: String?
     let until: String?
     let renew: String?
@@ -1502,7 +1502,7 @@ struct RemoteLoginQuota: Decodable, Equatable {
         plan = try c.decodeIfPresent(String.self, forKey: .plan)
         accessSku = try c.decodeIfPresent(String.self, forKey: .accessSku)
         user = try c.decodeIfPresent(String.self, forKey: .user)
-        windows = try c.decodeIfPresent([RemoteQuotaWindow].self, forKey: .windows) ?? []
+        windows = try c.decodeIfPresent([RemoteLoginQuotaWindow].self, forKey: .windows) ?? []
         balance = try c.decodeIfPresent(String.self, forKey: .balance)
         until = try c.decodeIfPresent(String.self, forKey: .until)
         renew = try c.decodeIfPresent(String.self, forKey: .renew)

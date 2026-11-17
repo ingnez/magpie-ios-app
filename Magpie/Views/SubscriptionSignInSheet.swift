@@ -155,7 +155,7 @@ struct SubscriptionSignInSheet: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundColor(MagpieTheme.ink)
                 if platform.isPluginBacked {
-                    MagpieTag(text: "插件", tone: MagpieTheme.info)
+                    MagpieTag(text: "插件", tone: MagpieTheme.ink)
                 }
                 if platform.risk {
                     MagpieTag(text: "注意风控", tone: MagpieTheme.warn)
@@ -172,7 +172,7 @@ struct SubscriptionSignInSheet: View {
             if let user = forUser, !user.isEmpty {
                 Text("目标账号：\(user)")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(MagpieTheme.accent)
+                    .foregroundColor(MagpieTheme.ink)
             }
         }
         .padding(16)
@@ -284,7 +284,7 @@ struct SubscriptionSignInSheet: View {
                                 }
                                 Spacer()
                                 Image(systemName: "arrow.right.circle.fill")
-                                    .foregroundColor(MagpieTheme.accent)
+                                    .foregroundColor(MagpieTheme.ink)
                             }
                             .padding(12)
                             .background(MagpieTheme.canvas)
@@ -808,7 +808,7 @@ struct SubscriptionSignInSheet: View {
             if !importFiles.isEmpty {
                 Text("已选文件：\(importFiles.map(\.name).joined(separator: ", "))")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(MagpieTheme.accent)
+                    .foregroundColor(MagpieTheme.ink)
             }
 
             TextEditor(text: $importText)
@@ -855,7 +855,7 @@ struct SubscriptionSignInSheet: View {
             ForEach(importResults) { item in
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
-                        .fill(item.status == "failed" ? MagpieTheme.danger : MagpieTheme.ok)
+                        .fill(item.status == "failed" ? MagpieTheme.err : MagpieTheme.ok)
                         .frame(width: 7, height: 7)
                         .padding(.top, 5)
                     VStack(alignment: .leading, spacing: 2) {
@@ -864,7 +864,7 @@ struct SubscriptionSignInSheet: View {
                             .foregroundColor(MagpieTheme.ink)
                         Text(importStatusLabel(item.status) + (item.error.map { " · \($0)" } ?? ""))
                             .font(.system(size: 11.5))
-                            .foregroundColor(item.status == "failed" ? MagpieTheme.danger : MagpieTheme.textSecondary)
+                            .foregroundColor(item.status == "failed" ? MagpieTheme.err : MagpieTheme.textSecondary)
                     }
                 }
             }
@@ -909,7 +909,7 @@ struct SubscriptionSignInSheet: View {
                 } label: {
                     HStack {
                         Image(systemName: included ? "checkmark.square.fill" : "square")
-                            .foregroundColor(included ? MagpieTheme.accent : MagpieTheme.textMuted)
+                            .foregroundColor(included ? MagpieTheme.ink : MagpieTheme.textMuted)
                         Text(login.user)
                             .font(.system(size: 13, design: .monospaced))
                             .foregroundColor(MagpieTheme.ink)

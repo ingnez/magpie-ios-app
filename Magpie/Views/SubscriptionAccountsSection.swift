@@ -208,7 +208,7 @@ struct SubscriptionAccountsSection: View {
                             .font(.system(size: 13.5, weight: .semibold, design: (alias?.isEmpty == false) ? .default : .monospaced))
                             .foregroundColor(MagpieTheme.ink)
                         if idx == 0 {
-                            MagpieTag(text: "首选 #1", tone: MagpieTheme.accent)
+                            MagpieTag(text: "首选 #1", tone: MagpieTheme.ink)
                         }
                         if login.active {
                             MagpieTag(text: "主用", tone: MagpieTheme.ok)
@@ -251,7 +251,7 @@ struct SubscriptionAccountsSection: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 5) {
                     if let plan = login.plan, !plan.isEmpty {
-                        MagpieTag(text: plan, tone: MagpieTheme.info)
+                        MagpieTag(text: plan, tone: MagpieTheme.ink)
                     }
                     if login.token {
                         MagpieTag(text: login.uses ? "Token 使用中" : "Setup-Token")
@@ -364,7 +364,7 @@ struct SubscriptionAccountsSection: View {
         }
     }
 
-    private func quotaWindowRow(_ w: RemoteQuotaWindow) -> some View {
+    private func quotaWindowRow(_ w: RemoteLoginQuotaWindow) -> some View {
         let clamped = min(max(w.used, 0), 100)
         return VStack(alignment: .leading, spacing: 3) {
             HStack {
@@ -639,7 +639,7 @@ struct SubscriptionAccountsSection: View {
                                 Spacer()
                                 if checked {
                                     Image(systemName: "checkmark")
-                                        .foregroundColor(MagpieTheme.accent)
+                                        .foregroundColor(MagpieTheme.ink)
                                 }
                             }
                         }
