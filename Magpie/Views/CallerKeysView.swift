@@ -166,13 +166,14 @@ private struct CallerKeyEditor: View {
                 }
                 let scope = try await store.client.callerKeyAction("models-key", payload: ["key": id, "models": modelIDs])
                 store.callerKeys = scope.keys
-                do {
-                    let access = try await store.client.callerKeyAction("access-key", payload: ["key": id, "readOnly": readOnly])
-                    store.callerKeys = access.keys
-                }
                 if let budget = budget {
                     let result = try await store.client.callerKeyAction("limit-key", payload: ["key": id, "limit": budget])
                     store.callerKeys = result.keys
+                }
+                // Apply every requested restriction before enabling caller access.
+                do {
+                    let access = try await store.client.callerKeyAction("access-key", payload: ["key": id, "readOnly": readOnly])
+                    store.callerKeys = access.keys
                 }
                 dismiss()
             } catch { self.error = error.localizedDescription; store.recordActionError(error) }
