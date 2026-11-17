@@ -76,6 +76,24 @@ struct ModelContractTests {
         precondition(allSubs.builtins.first(where: { $0.agent == "claude" })?.movedToPlugin == true)
         precondition(allSubs.extraPlugins.count == 1 && allSubs.extraPlugins[0].agent == "trae-cn")
 
+        let marketResp = try decode(RemotePluginListingsResponse.self, #"{"listings":[{"package":"@magpie-community/opencode-zen-free-auth","name":"OpenCode Zen Free","providers":["opencode-zen-free"],"community":true,"summary":{"zh":"免费模型通道"}}]}"#)
+        precondition(marketResp.listings.count == 1 && marketResp.listings[0].localizedSummary == "免费模型通道")
+        let marketPlatforms = SubscriptionCatalog.communityMarketPlatforms(plugins: providersResp.plugins, onPlugins: providersResp.onPlugins, listings: marketResp.listings)
+        precondition(marketPlatforms.contains(where: { $0.agent == "opencode-zen-free" && $0.pluginSpec == "@magpie-community/opencode-zen-free-auth" }))
+        precondition(marketPlatforms.contains(where: { $0.agent == "agy-cli" && $0.pluginSpec == "@magpie-community/opencode-agy-cli-auth" }))
+
+        precondition(SubscriptionCatalog.isPriorityRouting(""))
+        precondition(SubscriptionCatalog.isPriorityRouting("order"))
+        precondition(SubscriptionCatalog.isPriorityRouting("drain"))
+        precondition(!SubscriptionCatalog.isPriorityRouting("rotate"))
+        precondition(!SubscriptionCatalog.isPriorityRouting("weight"))
+        precondition(!SubscriptionCatalog.isPriorityRouting("usage"))
+
+        let agyRestProvider = try decode(RemoteProvider.self, #"{"id":"antigravity","name":"Antigravity","routing":"rotate","account":{"agent":"antigravity","user":"a@gmail.com","logins":[{"agent":"antigravity","user":"a@gmail.com","active":true,"on":true},{"agent":"antigravity","user":"b@gmail.com","active":false,"on":true,"paused":false}]},"accountWeights":{"a@gmail.com":3},"accountRests":{"b@gmail.com":[{"why":"rate","status":429,"until":"2026-11-17T22:15:00+08:00","rate":true,"key":"antigravity#b@gmail.com"}]}}"#)
+        precondition(agyRestProvider.routing == "rotate")
+        precondition(agyRestProvider.accountWeights["a@gmail.com"] == 3)
+        precondition(agyRestProvider.accountRests["b@gmail.com"]?.first?.key == "antigravity#b@gmail.com")
+
         print("PASS: OAuth sign-in, 19+ platform catalog, plugin prompts, multi-account logins & usage")
         print("PASS: origins, console routes, preserved provider fields, caller budgets")
         print("PASS: routing conditions, shared agent options, group disabled/off compatibility, numeric balance")

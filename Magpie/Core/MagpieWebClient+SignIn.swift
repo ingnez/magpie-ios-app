@@ -304,6 +304,23 @@ extension MagpieWebClient {
         ).value
     }
 
+    func fetchPluginListings() async throws -> [RemotePluginListing] {
+        return try await requestJSON(
+            RemotePluginListingsResponse.self,
+            path: "/api/plugins/listings",
+            timeout: 20
+        ).value.listings
+    }
+
+    func installPlugin(spec: String) async throws {
+        _ = try await requestData(
+            method: "POST",
+            path: "/api/plugins/add",
+            jsonBody: ["spec": spec],
+            timeout: 180
+        )
+    }
+
     func codexDaemonAction(_ action: String) async throws -> RemoteProvidersResponse {
         let allowed = ["restart", "dismiss", "dismiss-app", "dismiss-projects", "restart-app"]
         guard allowed.contains(action) else {

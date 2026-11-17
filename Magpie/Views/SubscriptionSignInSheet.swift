@@ -81,8 +81,32 @@ struct SubscriptionSignInSheet: View {
         let url: URL
     }
 
+    private var activePlatform: SubscriptionPlatform {
+        SubscriptionCatalog.resolve(
+            agent: platform.agent,
+            plugins: store.pluginSubs,
+            onPlugins: store.onPlugins,
+            movable: store.movableSubs
+        )
+    }
+
+    private var requiredPluginSpec: String? {
+        guard activePlatform.plugin == nil else { return nil }
+        let raw = activePlatform.pluginSpec ?? store.movesTo[activePlatform.agent]
+        let spec = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return spec.isEmpty ? nil : spec
+    }
+
+    private var reauthSite: String? {
+        guard let user = forUser, activePlatform.agent == "copilot", let at = user.lastIndex(of: "@") else {
+            return nil
+        }
+        let host = String(user[user.index(after: at)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return host.isEmpty ? nil : host
+    }
+
     private var existingProvider: RemoteProvider? {
-        store.providers.first(where: { $0.account?.agent == platform.agent })
+        store.providers.first(where: { $0.account?.agent == activePlatform.agent })
     }
 
     private var existingLogins: [RemoteProviderLogin] {
@@ -256,7 +280,17 @@ struct SubscriptionSignInSheet: View {
 
     private var launcherView: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let hint = platform.hint {
+            if hasExistingLogins && forUser == nil {
+                MinimalSection(title: "多账号号池状态", trailingText: "\(existingLogins.count) 个账号") {
+                    Text(activePlatform.single
+                         ? "该平台当前仅支持保留单个账号，继续授权将替换现有登录。"
+                         : "当前已有 \(existingLogins.count) 个账号；本次授权将追加新账号进入号池，不会覆盖已有登录。")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(activePlatform.single ? MagpieTheme.warn : MagpieTheme.ok)
+                }
+            }
+
+            if let hint = activePlatform.hint {
                 MinimalSection(title: "说明") {
                     Text(hint)
                         .font(.system(size: 12.5))
@@ -292,7 +326,65 @@ struct SubscriptionSignInSheet: View {
                         }
                     }
                 }
-            } else if let plugin = platform.plugin, !platform.movedToPlugin {
+            } else if let pluginSpec = requiredPluginSpec {
+                MinimalSection(title: "需先安装平台插件") {
+                    Text("该平台在当前 Magpie 服务端由社区插件接管，需先安装对应插件后再发起 OAuth / 账号授权：")
+                        .font(.system(size: 12.5))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                    Text(pluginSpec)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(MagpieTheme.ink)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(MagpieTheme.canvas)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                    if let err = errorText {
+                        MagpieErrorBanner(title: "插件安装失败", message: err)
+                    }
+
+                    Button(isBusy ? "正在安装插件并刷新…" : "一键安装插件并继续授权") {
+                        isBusy = true
+                        errorText = nil
+                        Task {
+                            let ok = await store.installSubscriptionPlugin(spec: pluginSpec)
+                            await MainActor.run {
+                                isBusy = false
+                                if !ok {
+                                    errorText = store.lastActionError ?? "安装插件失败"
+                                }
+                            }
+                        }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary))
+                    .disabled(isBusy)
+
+                    if pluginSpec == "@magpie-community/opencode-antigravity-auth" {
+                        Button(isBusy ? "正在安装 agy CLI 插件…" : "改用 Antigravity (local agy CLI) 安全插件") {
+                            isBusy = true
+                            errorText = nil
+                            Task {
+                                let ok = await store.installSubscriptionPlugin(spec: "@magpie-community/opencode-agy-cli-auth")
+                                await MainActor.run {
+                                    isBusy = false
+                                    if !ok {
+                                        errorText = store.lastActionError ?? "安装 agy CLI 插件失败"
+                                    }
+                                }
+                            }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                        .disabled(isBusy)
+                    }
+
+                    if activePlatform.importable {
+                        Button(activePlatform.importTitle ?? "从文件 / 文本导入账号") {
+                            phase = .importForm
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .subtle))
+                    }
+                }
+            } else if let plugin = activePlatform.plugin, !activePlatform.movedToPlugin {
                 MinimalSection(title: "选择认证方式") {
                     if plugin.methods.isEmpty {
                         Text("该插件未提供可用登录方式")
@@ -343,7 +435,7 @@ struct SubscriptionSignInSheet: View {
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .primary))
 
-                    if platform.supportsCodexDevice {
+                    if activePlatform.supportsCodexDevice {
                         Button("使用设备码登录 (Device Code)") {
                             selectedSite = "device"
                             beginSignInFlow(site: "device")
@@ -351,28 +443,28 @@ struct SubscriptionSignInSheet: View {
                         .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     }
 
-                    if platform.supportsCopilotGHE {
+                    if activePlatform.supportsCopilotGHE {
                         Button("使用 GitHub Enterprise (*.ghe.com) 登录") {
                             phase = .copilotGHE
                         }
                         .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     }
 
-                    if platform.supportsClaudeToken {
+                    if activePlatform.supportsClaudeToken {
                         Button("使用 Setup-Token (claude setup-token) 添加") {
                             phase = .claudeToken
                         }
                         .buttonStyle(MagpieButtonStyle(tone: .secondary))
                     }
 
-                    if platform.importable {
-                        Button(platform.importTitle ?? "从文件 / 文本导入账号") {
+                    if activePlatform.importable {
+                        Button(activePlatform.importTitle ?? "从文件 / 文本导入账号") {
                             phase = .importForm
                         }
                         .buttonStyle(MagpieButtonStyle(tone: .subtle))
                     }
 
-                    if platform.supportsExport && hasExistingLogins {
+                    if activePlatform.supportsExport && hasExistingLogins {
                         Button("导出已有账号 (Sub2API / CLIProxyAPI)") {
                             phase = .exportForm
                         }
@@ -381,7 +473,7 @@ struct SubscriptionSignInSheet: View {
                 }
             }
 
-            if platform.movedToPlugin, let plugin = platform.plugin, plugin.methods.count > 1 {
+            if activePlatform.movedToPlugin, let plugin = activePlatform.plugin, plugin.methods.count > 1 {
                 MinimalSection(title: "插件其他登录方式") {
                     ForEach(Array(plugin.methods.enumerated()), id: \.offset) { idx, method in
                         Button(method.localizedLabel) {
@@ -588,7 +680,7 @@ struct SubscriptionSignInSheet: View {
 
     private var pluginAPIKeyView: some View {
         MinimalSection(title: "输入插件凭据") {
-            let method = platform.plugin?.methods[safe: selectedPluginMethod]
+            let method = activePlatform.plugin?.methods[safe: selectedPluginMethod]
             MagpieInputField(
                 label: method?.localizedLabel ?? "API Key",
                 placeholder: method?.placeholder ?? "sk-...",
@@ -978,11 +1070,29 @@ struct SubscriptionSignInSheet: View {
                         .foregroundColor(MagpieTheme.textSecondary)
                 }
             }
-            Button("完成并返回") {
-                onFinished?(platform.agent)
-                dismiss()
+            if !activePlatform.single && forUser == nil {
+                HStack(spacing: 10) {
+                    Button("继续添加下一个账号") {
+                        signInState = nil
+                        callbackInput = ""
+                        errorText = nil
+                        phase = .launcher
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+
+                    Button("完成并返回") {
+                        onFinished?(activePlatform.agent)
+                        dismiss()
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                }
+            } else {
+                Button("完成并返回") {
+                    onFinished?(activePlatform.agent)
+                    dismiss()
+                }
+                .buttonStyle(MagpieButtonStyle(tone: .primary))
             }
-            .buttonStyle(MagpieButtonStyle(tone: .primary))
         }
     }
 
@@ -992,7 +1102,7 @@ struct SubscriptionSignInSheet: View {
             HStack(spacing: 10) {
                 Button("重试") {
                     errorText = nil
-                    if platform.plugin != nil {
+                    if activePlatform.plugin != nil {
                         startPluginFlow(methodIndex: selectedPluginMethod)
                     } else {
                         beginSignInFlow(site: selectedSite)
@@ -1035,7 +1145,7 @@ struct SubscriptionSignInSheet: View {
         case .auto:
             if platform.risk && forUser == nil && !hasExistingLogins {
                 phase = .riskWarning
-            } else if platform.sites.isEmpty && platform.plugin != nil && !platform.movedToPlugin && (platform.plugin?.methods.count ?? 0) == 1 {
+            } else if activePlatform.sites.isEmpty && activePlatform.plugin != nil && !activePlatform.movedToPlugin && (activePlatform.plugin?.methods.count ?? 0) == 1 {
                 phase = .launcher
             } else {
                 phase = .launcher
@@ -1044,7 +1154,7 @@ struct SubscriptionSignInSheet: View {
     }
 
     private func beginSignInFlow(site: String?) {
-        if let plugin = platform.plugin {
+        if let plugin = activePlatform.plugin {
             let idx = pluginMethodIndex(plugin: plugin, site: site)
             startPluginFlow(methodIndex: idx)
             return
@@ -1057,7 +1167,7 @@ struct SubscriptionSignInSheet: View {
             do {
                 let st = try await store.client.startSignIn(
                     agent: platform.agent,
-                    site: site,
+                    site: site ?? reauthSite,
                     proxy: effectiveProxyValue,
                     user: forUser,
                     linkOnly: true
@@ -1095,7 +1205,7 @@ struct SubscriptionSignInSheet: View {
     }
 
     private func startPluginFlow(methodIndex: Int) {
-        guard let plugin = platform.plugin else { return }
+        guard let plugin = activePlatform.plugin else { return }
         selectedPluginMethod = methodIndex
         pluginInputs = [:]
         activePluginPrompt = nil
@@ -1124,7 +1234,7 @@ struct SubscriptionSignInSheet: View {
     }
 
     private func submitPluginPromptAnswer(key: String, value: String) {
-        guard let plugin = platform.plugin else { return }
+        guard let plugin = activePlatform.plugin else { return }
         errorText = nil
         isBusy = true
         Task {
@@ -1209,7 +1319,7 @@ struct SubscriptionSignInSheet: View {
     }
 
     private func submitPluginAPIKey(_ key: String) {
-        guard let plugin = platform.plugin else { return }
+        guard let plugin = activePlatform.plugin else { return }
         errorText = nil
         isBusy = true
         Task {

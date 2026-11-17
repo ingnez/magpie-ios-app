@@ -237,6 +237,28 @@ extension GatewayStore {
         }
     }
 
+    func refreshPluginListings() async {
+        do {
+            let items = try await client.fetchPluginListings()
+            pluginListings = items
+        } catch {
+            // Best-effort; fall back to built-in catalog when server is older
+        }
+    }
+
+    func installSubscriptionPlugin(spec: String) async -> Bool {
+        do {
+            try await client.installPlugin(spec: spec)
+            await refreshProvidersWaitAndState()
+            await refreshPluginListings()
+            showToast("已安装插件 \(spec)")
+            return true
+        } catch {
+            recordActionError(error)
+            return false
+        }
+    }
+
     func codexDaemonAction(_ action: String, toast: String) async -> Bool {
         do {
             let resp = try await client.codexDaemonAction(action)

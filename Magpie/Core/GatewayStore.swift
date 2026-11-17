@@ -18,6 +18,7 @@ final class GatewayStore: ObservableObject {
     @Published var presets: [RemotePreset] = []
     @Published var gatewayStatus: RemoteGatewayStatus?
     @Published var pluginSubs: [RemotePluginSub] = []
+    @Published var pluginListings: [RemotePluginListing] = []
     @Published var onPlugins: [String] = []
     @Published var movableSubs: [String] = []
     @Published var movesTo: [String: String] = [:]
@@ -223,6 +224,16 @@ final class GatewayStore: ObservableObject {
         remoteSettings = RemoteSettingsState()
         providers = []
         presets = []
+        pluginSubs = []
+        pluginListings = []
+        onPlugins = []
+        movableSubs = []
+        movesTo = [:]
+        unmovedSubs = []
+        withdrawnPlugins = []
+        agyMoveUsers = []
+        excludedAccounts = []
+        loginUsageByAgent = [:]
         gatewayStatus = nil
         groups = []
         groupModels = []

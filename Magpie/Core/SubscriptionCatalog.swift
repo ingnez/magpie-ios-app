@@ -29,6 +29,53 @@ struct SubscriptionPlatform: Identifiable, Equatable {
     let sites: [SubscriptionSiteOption]
     let plugin: RemotePluginSub?
     let movedToPlugin: Bool
+    let pluginSpec: String?
+
+    init(
+        agent: String,
+        pid: String,
+        name: String,
+        subtitle: String,
+        plans: String,
+        keywords: String,
+        risk: Bool,
+        riskNote: String?,
+        hint: String?,
+        single: Bool,
+        importable: Bool,
+        importTitle: String?,
+        importIntro: String?,
+        supportsClaudeToken: Bool,
+        supportsCodexDevice: Bool,
+        supportsCopilotGHE: Bool,
+        supportsExport: Bool,
+        sites: [SubscriptionSiteOption],
+        plugin: RemotePluginSub?,
+        movedToPlugin: Bool,
+        pluginSpec: String? = nil
+    ) {
+        self.agent = agent
+        self.pid = pid
+        self.name = name
+        self.subtitle = subtitle
+        self.plans = plans
+        self.keywords = keywords
+        self.risk = risk
+        self.riskNote = riskNote
+        self.hint = hint
+        self.single = single
+        self.importable = importable
+        self.importTitle = importTitle
+        self.importIntro = importIntro
+        self.supportsClaudeToken = supportsClaudeToken
+        self.supportsCodexDevice = supportsCodexDevice
+        self.supportsCopilotGHE = supportsCopilotGHE
+        self.supportsExport = supportsExport
+        self.sites = sites
+        self.plugin = plugin
+        self.movedToPlugin = movedToPlugin
+        self.pluginSpec = pluginSpec
+    }
 
     var isPluginBacked: Bool { plugin != nil }
 }
@@ -458,16 +505,93 @@ enum SubscriptionCatalog {
         )
     ]
 
+    /// Built-ins whose upstream Magpie backend has migrated execution to community plugins when present.
+    static let pluginServedBuiltins: Set<String> = [
+        "antigravity", "cursor", "grok", "zcode", "kiro",
+        "workbuddy", "workbuddy-ai", "commandcode-plan",
+        "qoder", "qoder-cn", "devin", "zed", "factory", "mimo-app"
+    ]
+
+    static func isPriorityRouting(_ routing: String) -> Bool {
+        let r = routing.lowercased()
+        return r.isEmpty || r == "order" || r == "drain"
+    }
+
+    static func routingShortTag(_ routing: String) -> String {
+        switch routing.lowercased() {
+        case "": return "Smart 智能优先"
+        case "order": return "Order 严格顺序"
+        case "drain": return "Drain 用尽顺延"
+        case "rotate": return "Rotate 逐轮轮询"
+        case "weight": return "Weight 权重轮询"
+        case "usage": return "Usage 最少已用"
+        case "pace": return "Pace 速率均衡"
+        case "fast": return "Fast 速度优先"
+        case "free": return "Free 免费优先"
+        default: return routing
+        }
+    }
+
+    static let builtinCommunityListings: [RemotePluginListing] = [
+        RemotePluginListing(
+            package: "@magpie-community/opencode-agy-cli-auth",
+            name: "Antigravity (local agy CLI)",
+            icon: "antigravity-color",
+            providers: ["agy-cli"],
+            summary: ["zh": "通过本机 agy CLI 安全接入 Google Antigravity（替代已下架插件）。"]
+        ),
+        RemotePluginListing(
+            package: "@magpie-community/opencode-zen-free-auth",
+            name: "OpenCode Zen Free",
+            icon: "opencode",
+            providers: ["opencode-zen-free"],
+            summary: ["zh": "使用 public 凭证接入 OpenCode Zen 免费模型，自动发现模型并支持原生流式协议。"]
+        ),
+        RemotePluginListing(
+            package: "@magpie-community/opencode-qoder-auth",
+            name: "Qoder & 千问办公 (QwenWork)",
+            icon: "qoder",
+            providers: ["qoder", "qoder-cn", "qwenwork", "qwenwork-enterprise"],
+            replaces: "qoder",
+            summary: ["zh": "接入 Qoder 国际/国内版，以及千问办公公有云与企业旗舰版。"]
+        )
+    ]
+
+    static func routingCategorySummary(_ routing: String) -> String {
+        switch routing.lowercased() {
+        case "order":
+            return "优先级模式 · 严格按 #1→#2→#3 顺序，耗尽或冷却才顺延"
+        case "drain":
+            return "优先级模式 · 单号用尽再顺延下一顺位，不主动回切"
+        case "rotate":
+            return "轮询模式 · 每轮用户消息在已启用账号间轮流分发"
+        case "weight":
+            return "轮询模式 · 按账号权重比例平滑分流"
+        case "usage":
+            return "均衡模式 · 优先分配当前已用量比例最低的账号"
+        case "pace":
+            return "均衡模式 · 优先消耗距重置前单位时间余量最充裕的账号"
+        case "fast":
+            return "速度模式 · 按近期响应速度优先分配"
+        case "free":
+            return "免费模式 · 优先调用不消耗付费配额的免费额度"
+        default:
+            return "智能优先级 · 优先即将重置的可用账号，快耗尽或异常时切换"
+        }
+    }
+
     static func resolve(
         agent: String,
         plugins: [RemotePluginSub],
-        onPlugins: [String]
+        onPlugins: [String],
+        movable: [String] = []
     ) -> SubscriptionPlatform {
         let builtin = builtinPlatforms.first(where: { $0.agent == agent })
         let plugin = plugins.first(where: { $0.id == agent || $0.pid == agent })
         let moved = onPlugins.contains(agent)
+        let shouldUsePlugin = moved || movable.contains(agent) || pluginServedBuiltins.contains(agent)
 
-        if let b = builtin, let pl = plugin, moved {
+        if let b = builtin, let pl = plugin, shouldUsePlugin {
             return SubscriptionPlatform(
                 agent: b.agent,
                 pid: pl.pid,
@@ -488,7 +612,8 @@ enum SubscriptionCatalog {
                 supportsExport: b.supportsExport,
                 sites: b.sites,
                 plugin: pl,
-                movedToPlugin: true
+                movedToPlugin: moved,
+                pluginSpec: pl.spec.isEmpty ? nil : pl.spec
             )
         }
         if let b = builtin {
@@ -544,13 +669,72 @@ enum SubscriptionCatalog {
 
     static func allPlatforms(
         plugins: [RemotePluginSub],
-        onPlugins: [String]
+        onPlugins: [String],
+        movable: [String] = []
     ) -> (builtins: [SubscriptionPlatform], extraPlugins: [SubscriptionPlatform]) {
-        let builtins = builtinPlatforms.map { resolve(agent: $0.agent, plugins: plugins, onPlugins: onPlugins) }
+        let builtins = builtinPlatforms.map { resolve(agent: $0.agent, plugins: plugins, onPlugins: onPlugins, movable: movable) }
         let builtinIDs = Set(builtinPlatforms.map(\.agent))
         let extras = plugins
-            .filter { pl in !builtinIDs.contains(pl.id) && !(onPlugins.contains(pl.id)) }
-            .map { pl in resolve(agent: pl.id, plugins: plugins, onPlugins: onPlugins) }
+            .filter { pl in !builtinIDs.contains(pl.id) && !builtinIDs.contains(pl.pid) && !(onPlugins.contains(pl.id)) }
+            .map { pl in resolve(agent: pl.id, plugins: plugins, onPlugins: onPlugins, movable: movable) }
         return (builtins, extras)
+    }
+
+    static func communityMarketPlatforms(
+        plugins: [RemotePluginSub],
+        onPlugins: [String],
+        listings: [RemotePluginListing]
+    ) -> [SubscriptionPlatform] {
+        let installedIDs = Set(plugins.flatMap { [$0.id, $0.pid] })
+        let builtinIDs = Set(builtinPlatforms.map(\.agent))
+        let merged = listings.isEmpty ? builtinCommunityListings : (
+            listings + builtinCommunityListings.filter { def in
+                !listings.contains(where: { $0.package == def.package })
+            }
+        )
+        var seenAgents = Set<String>()
+        var result: [SubscriptionPlatform] = []
+        for item in merged {
+            if let kind = item.kind, !kind.isEmpty { continue }
+            for pid in item.providers {
+                if builtinIDs.contains(pid) || installedIDs.contains(pid) || onPlugins.contains(pid) || seenAgents.contains(pid) {
+                    continue
+                }
+                seenAgents.insert(pid)
+                let title: String
+                switch pid {
+                case "agy-cli": title = "Antigravity (local agy CLI)"
+                case "opencode-zen-free": title = "OpenCode Zen Free"
+                case "qwenwork": title = "千问办公 (QwenWork 公有云)"
+                case "qwenwork-enterprise": title = "千问办公企业旗舰版"
+                default: title = item.providers.count > 1 ? "\(item.name) · \(pid)" : item.name
+                }
+                let summary = item.localizedSummary.isEmpty ? "社区插件 · 需安装 \(item.package)" : item.localizedSummary
+                result.append(SubscriptionPlatform(
+                    agent: pid,
+                    pid: pid,
+                    name: title,
+                    subtitle: summary,
+                    plans: item.package,
+                    keywords: "\(pid) \(item.name) \(item.package) \(summary)",
+                    risk: false,
+                    riskNote: nil,
+                    hint: summary,
+                    single: false,
+                    importable: false,
+                    importTitle: nil,
+                    importIntro: nil,
+                    supportsClaudeToken: false,
+                    supportsCodexDevice: false,
+                    supportsCopilotGHE: false,
+                    supportsExport: false,
+                    sites: [],
+                    plugin: nil,
+                    movedToPlugin: false,
+                    pluginSpec: item.package
+                ))
+            }
+        }
+        return result
     }
 }

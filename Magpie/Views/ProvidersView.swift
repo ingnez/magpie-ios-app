@@ -249,6 +249,19 @@ struct ProvidersView: View {
                 .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
             }
         }
+        ForEach(store.unmovedSubs) { candidate in
+            MinimalSection(title: "\(candidate.name) 需迁移至插件", trailingText: candidate.pkg) {
+                Text(candidate.error.isEmpty ? "该内置订阅已下线，请安装对应插件后继续使用已有账号与模型。" : candidate.error)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(MagpieTheme.warn)
+                if !candidate.pkg.isEmpty {
+                    Button("一键安装插件 \(candidate.pkg)") {
+                        Task { _ = await store.installSubscriptionPlugin(spec: candidate.pkg) }
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                }
+            }
+        }
         ForEach(store.excludedAccounts.filter { !$0.quiet }) { ex in
             MinimalSection(title: "\(ex.agentName) 账号状态异常") {
                 Text(ex.why)
@@ -311,26 +324,43 @@ struct ProvidersView: View {
                 .foregroundColor(MagpieTheme.textSecondary)
                 .lineLimit(1)
 
-            HStack(spacing: 6) {
-                MagpieTag(text: "\(provider.exposed)/\(provider.models.count) 模型")
-                if !provider.routing.isEmpty {
-                    MagpieTag(text: provider.routing)
-                }
-                if !provider.keyList.isEmpty {
-                    let onKeys = provider.keyList.filter(\.on).count
-                    MagpieTag(text: "\(onKeys)/\(provider.keyList.count) Key")
-                } else if let masked = provider.key?.masked, !masked.isEmpty {
-                    MagpieTag(text: masked, monospaced: true)
-                } else if let acc = provider.account {
-                    if !acc.logins.isEmpty {
-                        let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
-                        MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.ink)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    MagpieTag(text: "\(provider.exposed)/\(provider.models.count) 模型")
+                    let hasPool = (provider.account?.logins.count ?? 0) > 1 || provider.keyList.count > 1
+                    if !provider.routing.isEmpty || hasPool {
+                        MagpieTag(
+                            text: SubscriptionCatalog.routingShortTag(provider.routing),
+                            tone: SubscriptionCatalog.isPriorityRouting(provider.routing) ? MagpieTheme.ink : MagpieTheme.ok
+                        )
                     }
-                    if let user = acc.user, !user.isEmpty {
-                        MagpieTag(text: user)
-                    }
-                    if let plan = acc.plan, !plan.isEmpty {
-                        MagpieTag(text: plan, tone: MagpieTheme.ok)
+                    if !provider.keyList.isEmpty {
+                        let onKeys = provider.keyList.filter(\.on).count
+                        MagpieTag(text: "\(onKeys)/\(provider.keyList.count) Key")
+                        let restKeys = provider.keyList.filter { $0.rest != nil }.count
+                        if restKeys > 0 {
+                            MagpieTag(text: "\(restKeys) 冷却", tone: MagpieTheme.warn)
+                        }
+                    } else if let masked = provider.key?.masked, !masked.isEmpty {
+                        MagpieTag(text: masked, monospaced: true)
+                    } else if let acc = provider.account {
+                        if !acc.logins.isEmpty {
+                            let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
+                            MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.ink)
+                        }
+                        if !provider.accountRests.isEmpty {
+                            MagpieTag(text: "\(provider.accountRests.count) 号冷却", tone: MagpieTheme.warn)
+                        }
+                        let lapsedCount = acc.logins.filter { $0.lapsed != nil }.count
+                        if lapsedCount > 0 {
+                            MagpieTag(text: "\(lapsedCount) 失效", tone: MagpieTheme.err)
+                        }
+                        if let user = acc.user, !user.isEmpty {
+                            MagpieTag(text: user)
+                        }
+                        if let plan = acc.plan, !plan.isEmpty {
+                            MagpieTag(text: plan, tone: MagpieTheme.ok)
+                        }
                     }
                 }
             }
@@ -361,7 +391,8 @@ struct ProvidersView: View {
                         signingPlatform = SubscriptionCatalog.resolve(
                             agent: agent,
                             plugins: store.pluginSubs,
-                            onPlugins: store.onPlugins
+                            onPlugins: store.onPlugins,
+                            movable: store.movableSubs
                         )
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
@@ -618,7 +649,9 @@ private struct AddProviderSheet: View {
 
     @State private var mode: CreationMode = .subscription
     @State private var subQuery = ""
+    @State private var presetQuery = ""
     @State private var selectedPresetID: String = ""
+    @State private var selectedRegionID: String = ""
     @State private var name = ""
     @State private var apiKey = ""
     @State private var chatURL = ""
@@ -629,7 +662,25 @@ private struct AddProviderSheet: View {
     @State private var errorMsg: String?
 
     private var catalog: (builtins: [SubscriptionPlatform], extraPlugins: [SubscriptionPlatform]) {
-        SubscriptionCatalog.allPlatforms(plugins: store.pluginSubs, onPlugins: store.onPlugins)
+        SubscriptionCatalog.allPlatforms(plugins: store.pluginSubs, onPlugins: store.onPlugins, movable: store.movableSubs)
+    }
+
+    private var marketPlatforms: [SubscriptionPlatform] {
+        SubscriptionCatalog.communityMarketPlatforms(
+            plugins: store.pluginSubs,
+            onPlugins: store.onPlugins,
+            listings: store.pluginListings
+        )
+    }
+
+    private var filteredPresets: [RemotePreset] {
+        let q = presetQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return store.presets }
+        return store.presets.filter {
+            $0.name.lowercased().contains(q)
+                || $0.id.lowercased().contains(q)
+                || ($0.short?.lowercased().contains(q) ?? false)
+        }
     }
 
     private func matches(_ p: SubscriptionPlatform) -> Bool {
@@ -688,26 +739,71 @@ private struct AddProviderSheet: View {
                             subscriptionListContent
                         } else {
                             if mode == .preset, !store.presets.isEmpty {
-                                MinimalSection(title: "选择厂商预设", trailingText: "\(store.presets.count) 个预设") {
-                                    ForEach(store.presets.prefix(30)) { preset in
+                                MinimalSection(title: "选择厂商预设", trailingText: "\(filteredPresets.count)/\(store.presets.count) 个预设") {
+                                    TextField("搜索预设：DeepSeek / Kimi / 智谱 / 火山 / 硅基流动…", text: $presetQuery)
+                                        .font(.system(size: 12.5))
+                                        .autocapitalization(.none)
+                                        .disableAutocorrection(true)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .background(MagpieTheme.canvas)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                                    ForEach(filteredPresets) { preset in
                                         Button {
                                             selectedPresetID = preset.id
+                                            let r = preset.regions.first
+                                            selectedRegionID = r?.id ?? ""
                                             name = preset.displayTitle
-                                            chatURL = preset.chat ?? ""
-                                            anthropicURL = preset.anthropic ?? ""
-                                            responsesURL = preset.responses ?? ""
+                                            chatURL = r?.chat ?? preset.chat ?? ""
+                                            anthropicURL = r?.anthropic ?? preset.anthropic ?? ""
+                                            responsesURL = r?.responses ?? preset.responses ?? ""
                                         } label: {
                                             HStack {
-                                                Text(preset.displayTitle)
-                                                    .font(.system(size: 13.5, weight: .medium))
-                                                    .foregroundColor(MagpieTheme.ink)
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(preset.displayTitle)
+                                                        .font(.system(size: 13.5, weight: .medium))
+                                                        .foregroundColor(MagpieTheme.ink)
+                                                    if !preset.regions.isEmpty {
+                                                        Text(preset.regions.map(\.name).joined(separator: " · "))
+                                                            .font(.system(size: 11))
+                                                            .foregroundColor(MagpieTheme.textMuted)
+                                                            .lineLimit(1)
+                                                    }
+                                                }
                                                 Spacer()
+                                                if preset.added {
+                                                    MagpieTag(text: "已添加")
+                                                }
                                                 if selectedPresetID == preset.id {
                                                     MagpieTag(text: "已选", tone: MagpieTheme.ok)
                                                 }
                                             }
                                         }
                                         .buttonStyle(.plain)
+
+                                        if selectedPresetID == preset.id && preset.regions.count > 1 {
+                                            ScrollView(.horizontal, showsIndicators: false) {
+                                                HStack(spacing: 6) {
+                                                    ForEach(preset.regions) { reg in
+                                                        let activeReg = selectedRegionID == reg.id
+                                                        Button(reg.name) {
+                                                            selectedRegionID = reg.id
+                                                            chatURL = reg.chat ?? preset.chat ?? ""
+                                                            anthropicURL = reg.anthropic ?? preset.anthropic ?? ""
+                                                            responsesURL = reg.responses ?? preset.responses ?? ""
+                                                        }
+                                                        .font(.system(size: 11.5, weight: activeReg ? .semibold : .medium))
+                                                        .foregroundColor(activeReg ? .white : MagpieTheme.ink)
+                                                        .padding(.horizontal, 10)
+                                                        .padding(.vertical, 5)
+                                                        .background(activeReg ? MagpieTheme.ink : MagpieTheme.canvas)
+                                                        .clipShape(Capsule())
+                                                        .buttonStyle(.plain)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             } else if mode == .preset && store.presets.isEmpty {
@@ -739,6 +835,7 @@ private struct AddProviderSheet: View {
         .preferredColorScheme(.light)
         .onAppear {
             mode = initialMode
+            Task { await store.refreshPluginListings() }
         }
     }
 
@@ -761,6 +858,7 @@ private struct AddProviderSheet: View {
 
         let filteredBuiltins = catalog.builtins.filter(matches)
         let filteredExtras = catalog.extraPlugins.filter(matches)
+        let filteredMarket = marketPlatforms.filter(matches)
 
         MinimalSection(title: "官方与内置反代订阅平台", trailingText: "\(filteredBuiltins.count) 个平台") {
             ForEach(filteredBuiltins) { platform in
@@ -771,6 +869,14 @@ private struct AddProviderSheet: View {
         if !filteredExtras.isEmpty {
             MinimalSection(title: "已安装的插件反代平台", trailingText: "\(filteredExtras.count) 个插件") {
                 ForEach(filteredExtras) { platform in
+                    subscriptionPlatformRow(platform)
+                }
+            }
+        }
+
+        if !filteredMarket.isEmpty {
+            MinimalSection(title: "社区插件反代平台（可一键安装）", trailingText: "\(filteredMarket.count) 个平台") {
+                ForEach(filteredMarket) { platform in
                     subscriptionPlatformRow(platform)
                 }
             }
@@ -818,6 +924,8 @@ private struct AddProviderSheet: View {
                         }
                         if platform.isPluginBacked {
                             MagpieTag(text: "插件", tone: MagpieTheme.ink)
+                        } else if platform.pluginSpec != nil {
+                            MagpieTag(text: "待装插件")
                         }
                         if platform.risk {
                             MagpieTag(text: "风控", tone: MagpieTheme.warn)
@@ -856,7 +964,7 @@ private struct AddProviderSheet: View {
                     preset: preset,
                     name: cleanName,
                     key: apiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-                    region: preset.regions.first,
+                    region: preset.regions.first(where: { $0.id == selectedRegionID }) ?? preset.regions.first,
                     customEndpoint: chatURL.trimmingCharacters(in: .whitespacesAndNewlines)
                 )
                 isSaving = false

@@ -1035,6 +1035,10 @@ struct RemoteKeyRest: Decodable, Equatable {
     let status: Int?
     let until: String?
     let rate: Bool?
+    let key: String?
+    let model: String?
+    let probed: Bool?
+    let by: String?
 }
 
 struct RemoteKeySpend: Decodable, Equatable {
@@ -2591,4 +2595,69 @@ struct RemoteCallerKey: Decodable, Identifiable, Equatable {
 struct RemoteAgentFastResponse: Decodable {
     let fast: Bool
     let ultra: Bool
+}
+
+struct RemotePluginListing: Decodable, Identifiable, Equatable {
+    var id: String { package }
+    let package: String
+    let name: String
+    let icon: String?
+    let providers: [String]
+    let community: Bool
+    let replaces: String?
+    let kind: String?
+    let summary: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case package, name, icon, providers, community, replaces, kind, summary
+    }
+
+    init(
+        package: String,
+        name: String,
+        icon: String? = nil,
+        providers: [String] = [],
+        community: Bool = true,
+        replaces: String? = nil,
+        kind: String? = nil,
+        summary: [String: String] = [:]
+    ) {
+        self.package = package
+        self.name = name
+        self.icon = icon
+        self.providers = providers
+        self.community = community
+        self.replaces = replaces
+        self.kind = kind
+        self.summary = summary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        package = try c.decodeIfPresent(String.self, forKey: .package) ?? ""
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? package
+        icon = try c.decodeIfPresent(String.self, forKey: .icon)
+        providers = try c.decodeIfPresent([String].self, forKey: .providers) ?? []
+        community = try c.decodeIfPresent(Bool.self, forKey: .community) ?? false
+        replaces = try c.decodeIfPresent(String.self, forKey: .replaces)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind)
+        summary = try c.decodeIfPresent([String: String].self, forKey: .summary) ?? [:]
+    }
+
+    var localizedSummary: String {
+        summary["zh"] ?? summary["zh-CN"] ?? summary["en"] ?? ""
+    }
+}
+
+struct RemotePluginListingsResponse: Decodable {
+    let listings: [RemotePluginListing]
+
+    enum CodingKeys: String, CodingKey {
+        case listings
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        listings = try c.decodeIfPresent([RemotePluginListing].self, forKey: .listings) ?? []
+    }
 }

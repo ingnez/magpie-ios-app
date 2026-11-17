@@ -88,16 +88,19 @@ struct ProviderDetailSheet: View {
         store.providers.first(where: { $0.id == providerID })
     }
 
-    private let routingOptions: [(id: String, title: String, note: String)] = [
-        ("", "Smart 智能", "优先当前可用，余量不足时智能切号"),
-        ("order", "Order 顺序", "按号池顺序依次调用，失败再顺延"),
-        ("drain", "Drain 耗尽", "用尽一个 Key/账号后再切换到下一个"),
-        ("rotate", "Rotate 轮询", "每次请求轮流分配不同 Key/账号"),
-        ("usage", "Usage 均衡", "优先使用当前已用量最低的账号"),
-        ("pace", "Pace 速率", "按剩余重置速率优先消耗快过期的额度"),
-        ("weight", "Weight 权重", "按各 Key 配置的权重比例分配流量"),
-        ("fast", "Fast 最快", "按近期首字与输出速度优先选择"),
-        ("free", "Free 免费", "优先消耗免费模型或免费额度")
+    private let priorityRoutingOptions: [(id: String, title: String, note: String)] = [
+        ("", "Smart 智能优先级", "非均分轮询：优先即将重置的可用账号，快耗尽或异常时切换（Key 按列表顺序）"),
+        ("order", "Order 严格顺序优先级", "严格按 #1 → #2 → #3 顺序调用，仅耗尽/限流冷却/失败时顺延，恢复后回到高优先级"),
+        ("drain", "Drain 用尽顺延", "锁定当前顺位直至耗尽才切下一位，不主动回切；冷却时暂时跳过")
+    ]
+
+    private let rotationRoutingOptions: [(id: String, title: String, note: String)] = [
+        ("rotate", "Rotate 逐轮轮询", "每次用户新消息在已启用账号间轮流分发（同轮工具调用保持同号；Session 粘性可锁定整会话）"),
+        ("weight", "Weight 权重轮询", "按各账号/Key 权重比例平滑轮询分配流量"),
+        ("usage", "Usage 最少已用", "优先使用当前已用量比例最低的账号"),
+        ("pace", "Pace 速率均衡", "优先消耗重置前单位时间余量最充裕的账号"),
+        ("fast", "Fast 速度优先", "按近期首字与输出速度优先选择"),
+        ("free", "Free 免费优先", "优先消耗不扣减付费配额的免费模型或免费额度")
     ]
 
     private let affinityOptions: [(id: String, title: String)] = [
@@ -337,30 +340,21 @@ struct ProviderDetailSheet: View {
                 }
             }
 
-            MinimalSection(title: "多号轮询策略", trailingText: p.routing.isEmpty ? "smart" : p.routing) {
-                ForEach(routingOptions, id: \.id) { opt in
-                    let isSelected = p.routing == opt.id
-                    Button {
-                        Task { await store.updateProviderRouting(p, routing: opt.id) }
-                    } label: {
-                        HStack(alignment: .center, spacing: 10) {
-                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                                .font(.system(size: 15))
-                                .foregroundColor(isSelected ? MagpieTheme.ink : MagpieTheme.textMuted)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(opt.title)
-                                    .font(.system(size: 13.5, weight: isSelected ? .semibold : .medium))
-                                    .foregroundColor(MagpieTheme.ink)
-                                Text(opt.note)
-                                    .font(.system(size: 11.5))
-                                    .foregroundColor(MagpieTheme.textMuted)
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 3)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
+            MinimalSection(
+                title: "优先级与顺延策略",
+                trailingText: SubscriptionCatalog.isPriorityRouting(p.routing) ? (p.routing.isEmpty ? "smart" : p.routing) : "未启用"
+            ) {
+                ForEach(priorityRoutingOptions, id: \.id) { opt in
+                    routingOptionRow(p: p, opt: opt)
+                }
+            }
+
+            MinimalSection(
+                title: "轮询与负载均衡策略",
+                trailingText: !SubscriptionCatalog.isPriorityRouting(p.routing) ? p.routing : "未启用"
+            ) {
+                ForEach(rotationRoutingOptions, id: \.id) { opt in
+                    routingOptionRow(p: p, opt: opt)
                 }
             }
 
@@ -389,16 +383,18 @@ struct ProviderDetailSheet: View {
                     }
                 }
 
-                Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                if p.routing != "rotate" && p.routing != "weight" {
+                    Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
-                toggleRow(
-                    title: "限流后沉底 (Sink)",
-                    subtitle: "触发 429 后暂排到号池队尾，避免频繁撞限流",
-                    isOn: Binding(
-                        get: { p.sink },
-                        set: { val in Task { await store.updateProviderSink(p, sink: val) } }
+                    toggleRow(
+                        title: "限流后沉底 (Sink)",
+                        subtitle: "触发 429 后暂排到号池队尾，避免频繁撞限流",
+                        isOn: Binding(
+                            get: { p.sink },
+                            set: { val in Task { await store.updateProviderSink(p, sink: val) } }
+                        )
                     )
-                )
+                }
 
                 Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
@@ -446,6 +442,31 @@ struct ProviderDetailSheet: View {
         }
     }
 
+    private func routingOptionRow(p: RemoteProvider, opt: (id: String, title: String, note: String)) -> some View {
+        let isSelected = p.routing == opt.id
+        return Button {
+            Task { await store.updateProviderRouting(p, routing: opt.id) }
+        } label: {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundColor(isSelected ? MagpieTheme.ink : MagpieTheme.textMuted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(opt.title)
+                        .font(.system(size: 13.5, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(MagpieTheme.ink)
+                    Text(opt.note)
+                        .font(.system(size: 11.5))
+                        .foregroundColor(MagpieTheme.textMuted)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 3)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Tab 2: Multi-Key Pool
 
     private func keysSection(_ p: RemoteProvider) -> some View {
@@ -456,7 +477,8 @@ struct ProviderDetailSheet: View {
                     let platform = SubscriptionCatalog.resolve(
                         agent: agent,
                         plugins: store.pluginSubs,
-                        onPlugins: store.onPlugins
+                        onPlugins: store.onPlugins,
+                        movable: store.movableSubs
                     )
                     signInRequest = SignInSheetRequest(
                         platform: platform,

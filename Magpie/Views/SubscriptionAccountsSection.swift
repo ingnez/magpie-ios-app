@@ -25,8 +25,13 @@ struct SubscriptionAccountsSection: View {
         SubscriptionCatalog.resolve(
             agent: agent,
             plugins: store.pluginSubs,
-            onPlugins: store.onPlugins
+            onPlugins: store.onPlugins,
+            movable: store.movableSubs
         )
+    }
+
+    private var isPriorityMode: Bool {
+        SubscriptionCatalog.isPriorityRouting(provider.routing)
     }
 
     private var logins: [RemoteProviderLogin] {
@@ -44,8 +49,31 @@ struct SubscriptionAccountsSection: View {
             }
 
             MinimalSection(
-                title: "订阅账号池 (\(logins.count))",
+                title: "调度模式：优先级 vs 轮询",
                 trailingText: provider.routing.isEmpty ? "smart" : provider.routing
+            ) {
+                Text(SubscriptionCatalog.routingCategorySummary(provider.routing))
+                    .font(.system(size: 12))
+                    .foregroundColor(MagpieTheme.textSecondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 7) {
+                        routingQuickChip(id: "", title: "Smart 智能优先级")
+                        routingQuickChip(id: "order", title: "Order 严格顺序")
+                        routingQuickChip(id: "drain", title: "Drain 用尽顺延")
+                        routingQuickChip(id: "rotate", title: "Rotate 逐轮轮询")
+                        routingQuickChip(id: "weight", title: "Weight 权重轮询")
+                        routingQuickChip(id: "usage", title: "Usage 最少已用")
+                        routingQuickChip(id: "pace", title: "Pace 速率均衡")
+                        routingQuickChip(id: "fast", title: "Fast 速度优先")
+                        routingQuickChip(id: "free", title: "Free 免费优先")
+                    }
+                }
+            }
+
+            MinimalSection(
+                title: "订阅账号池 (\(logins.count))",
+                trailingText: isPriorityMode ? "按列表顺位优先" : "按策略轮询/分流"
             ) {
                 HStack(spacing: 8) {
                     Button("+ OAuth 添加") {
@@ -193,13 +221,25 @@ struct SubscriptionAccountsSection: View {
         let ownProxy = provider.accountProxies[lower]
         let allowedModels = provider.accountModels[lower] ?? []
         let rests = provider.accountRests[lower] ?? []
+        let isCoolingWhole = rests.contains { ($0.model ?? "").isEmpty }
         let quota = usageMap.first(where: { $0.key.caseInsensitiveCompare(login.user) == .orderedSame })?.value
+        let usableLogins = logins.filter { $0.lapsed == nil && !$0.paused && ($0.active || $0.on) }
+        let totalEnabledWeight = usableLogins.reduce(0) { sum, item in
+            sum + max(provider.accountWeights[item.user.lowercased()] ?? 1, 1)
+        }
+        let thisWeight = max(weight ?? 1, 1)
+        let weightSharePct = totalEnabledWeight > 0 ? Int(round(Double(thisWeight) / Double(totalEnabledWeight) * 100.0)) : 0
         let isUsable = login.lapsed == nil && !login.paused && (login.active || login.on)
+        let dotColor: Color = {
+            if login.lapsed != nil { return MagpieTheme.err }
+            if isCoolingWhole { return MagpieTheme.warn }
+            return isUsable ? MagpieTheme.ok : MagpieTheme.textMuted
+        }()
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Circle()
-                    .fill(login.lapsed != nil ? MagpieTheme.err : (isUsable ? MagpieTheme.ok : MagpieTheme.textMuted))
+                    .fill(dotColor)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 2) {
@@ -207,18 +247,23 @@ struct SubscriptionAccountsSection: View {
                         Text(displayTitle)
                             .font(.system(size: 13.5, weight: .semibold, design: (alias?.isEmpty == false) ? .default : .monospaced))
                             .foregroundColor(MagpieTheme.ink)
-                        if idx == 0 {
-                            MagpieTag(text: "首选 #1", tone: MagpieTheme.ink)
-                        }
-                        if login.active {
-                            MagpieTag(text: "主用", tone: MagpieTheme.ok)
-                        }
                         if login.lapsed != nil {
-                            MagpieTag(text: "已失效", tone: MagpieTheme.err)
+                            MagpieTag(text: "登录失效", tone: MagpieTheme.err)
                         } else if login.paused {
                             MagpieTag(text: "已暂停", tone: MagpieTheme.warn)
                         } else if !login.on && !login.active {
                             MagpieTag(text: "已停用")
+                        } else if isCoolingWhole {
+                            MagpieTag(text: "冷却跳过", tone: MagpieTheme.warn)
+                        } else if isPriorityMode {
+                            MagpieTag(text: idx == 0 ? "优先级 #1" : "顺位 #\(idx + 1)", tone: idx == 0 ? MagpieTheme.ink : MagpieTheme.ok)
+                        } else if provider.routing.lowercased() == "weight" {
+                            MagpieTag(text: "权重 \(thisWeight) · 约 \(weightSharePct)% 轮询", tone: MagpieTheme.ok)
+                        } else {
+                            MagpieTag(text: "参与轮询", tone: MagpieTheme.ok)
+                        }
+                        if login.active && !isPriorityMode {
+                            MagpieTag(text: "主用", tone: MagpieTheme.ink)
                         }
                     }
 
@@ -306,14 +351,34 @@ struct SubscriptionAccountsSection: View {
 
             // Rests
             ForEach(Array(rests.enumerated()), id: \.offset) { _, rest in
-                Text("冷却中：\(rest.why ?? "限流") \(rest.until ?? "")")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(MagpieTheme.warn)
+                let scope = (rest.model?.isEmpty == false) ? "模型 \(rest.model!) 冷却" : "整号冷却"
+                HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(scope)：\(rest.why ?? "限流/异常")")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundColor(MagpieTheme.warn)
+                        if let until = rest.until, !until.isEmpty {
+                            Text("预计恢复：\(until)")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundColor(MagpieTheme.textMuted)
+                        }
+                    }
+                    Spacer()
+                    if let restKey = rest.key, !restKey.isEmpty {
+                        Button("解除冷却") {
+                            Task { _ = await store.liftGatewayKeyRest(key: restKey) }
+                        }
+                        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
+                    }
+                }
+                .padding(8)
+                .background(MagpieTheme.canvas)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
             // Actions
             HStack(spacing: 8) {
-                if idx > 0 && login.lapsed == nil {
+                if idx > 0 && login.lapsed == nil && isPriorityMode {
                     Button("设为首选") {
                         Task { _ = await store.makeAccountFirst(provider: provider, user: login.user, logins: logins) }
                     }
@@ -330,18 +395,22 @@ struct SubscriptionAccountsSection: View {
                 }
 
                 if login.lapsed == nil && !login.token {
-                    Button(login.on ? "停用" : "启用") {
-                        let act = login.on ? "off" : "on"
+                    let isCurrentlyOn = !login.paused && (login.on || login.active)
+                    let soleFixedPrimary = login.active && !login.paused && usableLogins.count <= 1 && agent != "codex" && agent != "claude"
+                    let btnLabel = login.paused ? "恢复" : (isCurrentlyOn ? (login.active ? "暂停" : "停用") : "启用")
+                    Button(btnLabel) {
+                        let act = isCurrentlyOn ? "off" : "on"
                         Task {
                             _ = await store.performLoginAction(
                                 act,
                                 agent: agent,
                                 user: login.user,
-                                toast: login.on ? "已停用 \(login.user)" : "已启用 \(login.user)"
+                                toast: isCurrentlyOn ? "已停用 \(login.user)" : "已启用 \(login.user)"
                             )
                         }
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .subtle, compact: true))
+                    .disabled(soleFixedPrimary)
                 }
 
                 Button("重授权") {
@@ -381,7 +450,8 @@ struct SubscriptionAccountsSection: View {
                         .font(.system(size: 11))
                         .foregroundColor(MagpieTheme.ok)
                 } else {
-                    Text(String(format: "已用 %.0f%%", clamped))
+                    let resetHint = formatResetSecs(w.resetSecs)
+                    Text(resetHint.isEmpty ? String(format: "已用 %.0f%%", clamped) : String(format: "已用 %.0f%% · %@", clamped, resetHint))
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundColor(clamped >= 90 ? MagpieTheme.err : MagpieTheme.textSecondary)
                 }
@@ -669,7 +739,37 @@ struct SubscriptionAccountsSection: View {
         .preferredColorScheme(.light)
     }
 
+    private func routingQuickChip(id: String, title: String) -> some View {
+        let selected = provider.routing == id
+        return Button(title) {
+            Task { await store.updateProviderRouting(provider, routing: id) }
+        }
+        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+        .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
+        .clipShape(Capsule())
+        .overlay(Capsule().stroke(MagpieTheme.hairline, lineWidth: selected ? 0 : 1))
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Helpers
+
+    private func formatResetSecs(_ secs: Int64?) -> String {
+        guard let s = secs, s > 0 else { return "" }
+        if s >= 86400 {
+            let d = s / 86400
+            let h = (s % 86400) / 3600
+            return h > 0 ? "\(d)天\(h)时重置" : "\(d)天重置"
+        }
+        if s >= 3600 {
+            let h = s / 3600
+            let m = (s % 3600) / 60
+            return m > 0 ? "\(h)时\(m)分重置" : "\(h)小时重置"
+        }
+        return "\(max(s / 60, 1))分重置"
+    }
 
     private func refreshUsage() {
         isLoadingUsage = true

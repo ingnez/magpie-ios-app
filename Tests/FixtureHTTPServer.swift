@@ -9,7 +9,7 @@ final class FixtureHTTPServer {
     private let lock = NSLock()
     private var rows: [[String: Any]] = []
     private var traceRows: [[String: Any]] = []
-    private let responses: [String: Any]
+    private var responses: [String: Any]
     var port: UInt16 { listener.port!.rawValue }
 
     init() throws {
@@ -60,6 +60,20 @@ final class FixtureHTTPServer {
     private func json(_ connection: NWConnection, _ value: Any, status: Int = 200) {
         send(connection, (try? JSONSerialization.data(withJSONObject: value)) ?? Data("{}".utf8), status: status)
     }
+    private func snapshot(_ key: String) -> Any? {
+        lock.lock(); defer { lock.unlock() }
+        return responses[key]
+    }
+
+    private func mutateProviders(_ transform: ([[String: Any]]) -> [[String: Any]]) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard var wrap = responses["/api/providers"] as? [String: Any],
+              let list = wrap["providers"] as? [[String: Any]] else { return }
+        wrap["providers"] = transform(list)
+        responses["/api/providers"] = wrap
+    }
+
     private func answer(_ connection: NWConnection, method: String, url: URLComponents, headers: String, body: Data) {
         let path = url.path
         lock.lock(); traceRows.append(["method": method, "path": path, "hasSession": headers.contains("magpie_web_fixture=test-session")]); lock.unlock()
@@ -74,7 +88,8 @@ final class FixtureHTTPServer {
                 let html = "<!doctype html><meta name='viewport' content='width=device-width'><h1>控制台联调演示</h1><p>Cookie 会话验证通过</p><p id=tab></p><script>if(localStorage.getItem('magpie.usageTab')==='context')document.getElementById('tab').textContent='上下文页签选择通过'</script>"
                 send(connection, Data(html.utf8), type: "text/html; charset=utf-8"); return
             }
-            guard let value = responses[path] else { json(connection, ["error": "unknown GET: \(path)"], status: 404); return }
+            let value: Any? = { lock.lock(); defer { lock.unlock() }; return responses[path] }()
+            guard let value = value else { json(connection, ["error": "unknown GET: \(path)"], status: 404); return }
             if path == "/api/gateway/trace" {
                 queue.asyncAfter(deadline: .now() + 0.4) { self.json(connection, value) }
             } else { json(connection, value) }
@@ -82,47 +97,130 @@ final class FixtureHTTPServer {
         }
         let payload = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
         lock.lock(); rows.append(["path": path, "body": payload]); lock.unlock()
-        if path.hasPrefix("/api/groups/") { json(connection, responses["/api/groups"]!) }
+        if path.hasPrefix("/api/groups/") { json(connection, snapshot("/api/groups")!) }
+        else if path == "/api/provider/route" {
+            mutateProviders { providers in
+                let pid = payload["id"] as? String ?? ""
+                let routing = payload["routing"] as? String ?? ""
+                return providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == pid { m["routing"] = routing }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path == "/api/provider/arrange" {
+            mutateProviders { providers in
+                let pid = payload["id"] as? String ?? ""
+                let order = payload["accountOrder"] as? [String] ?? []
+                return providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == pid, var acc = m["account"] as? [String: Any], let logins = acc["logins"] as? [[String: Any]] {
+                        var reordered: [[String]] = []
+                        _ = reordered
+                        var nextLogins: [[String: Any]] = []
+                        for u in order {
+                            if let match = logins.first(where: { ($0["user"] as? String)?.caseInsensitiveCompare(u) == .orderedSame }) {
+                                nextLogins.append(match)
+                            }
+                        }
+                        for l in logins where !nextLogins.contains(where: { ($0["user"] as? String) == (l["user"] as? String) }) {
+                            nextLogins.append(l)
+                        }
+                        acc["logins"] = nextLogins
+                        if let firstUser = nextLogins.first?["user"] as? String { acc["user"] = firstUser }
+                        m["account"] = acc
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
+        }
         else if path == "/api/provider/save" || path.hasPrefix("/api/provider/") || path.hasPrefix("/api/providers/") || path.hasPrefix("/api/keys/") {
-            json(connection, responses["/api/providers"]!)
+            json(connection, snapshot("/api/providers")!)
         }
         else if path == "/api/masking/values" { json(connection, ["values": ["{{EMAIL_demo}}": "demo@example.invalid"]]) }
         else if path == "/api/masking/preview" { json(connection, ["text": "预览 {{EMAIL_demo}}", "hits": []]) }
         else if path == "/api/settings/port" {
-            json(connection, ["settings": responses["/api/settings"]!, "port": ["ok": true]])
+            json(connection, ["settings": snapshot("/api/settings")!, "port": ["ok": true]])
         }
         else if path == "/api/settings/archive" {
             json(connection, ["on": (payload["on"] as? Bool) ?? false, "folder": "~/.config/magpie/archive"])
         }
-        else if path == "/api/settings" || path.hasPrefix("/api/settings/") { json(connection, responses["/api/settings"]!) }
+        else if path == "/api/settings" || path.hasPrefix("/api/settings/") { json(connection, snapshot("/api/settings")!) }
         else if path == "/api/proxies/test" { json(connection, ["ok": true, "ms": 35, "ip": "203.0.113.10", "loc": "HK"]) }
-        else if path.hasPrefix("/api/proxies/") { json(connection, responses["/api/settings"]!) }
+        else if path.hasPrefix("/api/proxies/") { json(connection, snapshot("/api/settings")!) }
         else if path == "/api/backup/export" {
             json(connection, ["path": "~/Downloads/magpie-2026-11-17.magpie", "providers": 1, "profiles": 1, "agents": 1, "library": true, "signIns": 0])
         }
         else if path == "/api/backup/import" {
             json(connection, ["providers": 1, "profiles": 1, "agents": 1, "settings": true, "library": true, "memory": 0, "signIns": 0, "signInsLocked": false])
         }
-        else if path.hasPrefix("/api/autobackup/") { json(connection, responses["/api/autobackup"]!) }
-        else if path.hasPrefix("/api/davsync/") { json(connection, responses["/api/davsync"]!) }
+        else if path.hasPrefix("/api/autobackup/") { json(connection, snapshot("/api/autobackup")!) }
+        else if path.hasPrefix("/api/davsync/") { json(connection, snapshot("/api/davsync")!) }
         else if path.hasPrefix("/api/tune/") {
             json(connection, ["value": (payload["value"] as? String) ?? "160000", "source": "long", "ours": true, "take": false])
         }
-        else if path == "/api/model-price" { json(connection, responses["/api/model-price"]!) }
-        else if path == "/api/privacy-model" { json(connection, responses["/api/privacy-model"]!) }
+        else if path == "/api/model-price" { json(connection, snapshot("/api/model-price")!) }
+        else if path == "/api/privacy-model" { json(connection, snapshot("/api/privacy-model")!) }
         else if path == "/api/gateway/take-over" || path == "/api/gateway/restart" { json(connection, ["ok": true]) }
         else if path == "/api/gateway/pause" { json(connection, ["paused": (payload["on"] as? Bool) ?? false, "agents": ["claude"]]) }
-        else if path == "/api/gateway/unrest" { json(connection, ["lifted": true]) }
+        else if path == "/api/gateway/unrest" {
+            let targetKey = payload["key"] as? String ?? ""
+            mutateProviders { providers in
+                providers.map { p in
+                    var m = p
+                    if var rests = m["accountRests"] as? [String: [[String: Any]]] {
+                        for (user, items) in rests {
+                            let filtered = items.filter { ($0["key"] as? String) != targetKey }
+                            if filtered.isEmpty { rests.removeValue(forKey: user) } else { rests[user] = filtered }
+                        }
+                        m["accountRests"] = rests
+                    }
+                    return m
+                }
+            }
+            json(connection, ["lifted": true])
+        }
         else if path == "/api/usage/clear" || path == "/api/usage/codex-reset" { json(connection, ["ok": true]) }
         else if path == "/api/signin" || path == "/api/plugin-signin" {
+            lock.lock()
             var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
             if let ag = payload["agent"] as? String { st["agent"] = ag }
+            st["state"] = "waiting"
+            st.removeValue(forKey: "user")
+            responses["/api/signin/s1"] = st
+            lock.unlock()
             json(connection, st)
         }
-        else if path == "/api/signin/s1/cancel" || path == "/api/signin/s1/callback" { json(connection, [:]) }
+        else if path == "/api/signin/s1/cancel" { json(connection, [:]) }
+        else if path == "/api/signin/s1/callback" {
+            lock.lock()
+            var st = (responses["/api/signin/s1"] as? [String: Any]) ?? [:]
+            st["state"] = "done"
+            st["user"] = "demo3@gmail.com"
+            st["plan"] = "Google AI Pro"
+            responses["/api/signin/s1"] = st
+            lock.unlock()
+            mutateProviders { providers in
+                providers.map { p in
+                    var m = p
+                    if (m["id"] as? String) == "antigravity", var acc = m["account"] as? [String: Any], var logins = acc["logins"] as? [[String: Any]] {
+                        if !logins.contains(where: { ($0["user"] as? String) == "demo3@gmail.com" }) {
+                            logins.append(["agent": "antigravity", "user": "demo3@gmail.com", "plan": "Google AI Pro", "active": false, "on": true])
+                        }
+                        acc["logins"] = logins
+                        m["account"] = acc
+                    }
+                    return m
+                }
+            }
+            json(connection, [:])
+        }
         else if path == "/api/signin/claude-token" { json(connection, ["user": "claude-token-demo"]) }
         else if path == "/api/signin/import" {
-            json(connection, ["results": [["user": "imported@gmail.com", "status": "added"]], "providers": responses["/api/providers"]!])
+            json(connection, ["results": [["user": "imported@gmail.com", "status": "added"]], "providers": snapshot("/api/providers")!])
         }
         else if path == "/api/signin/export" {
             json(connection, ["path": "~/Downloads/magpie-export.json", "accounts": ["demo1@gmail.com"], "skipped": []])
@@ -130,10 +228,34 @@ final class FixtureHTTPServer {
         else if path == "/api/plugin-signin/prompt" {
             json(connection, ["inputs": payload["inputs"] ?? [:]])
         }
-        else if path.hasPrefix("/api/login/") || path.hasPrefix("/api/codex/daemon/") {
-            json(connection, responses["/api/providers"]!)
+        else if path == "/api/login/off" || path == "/api/login/on" {
+            let enable = (path == "/api/login/on")
+            let targetUser = payload["user"] as? String ?? ""
+            let targetAgent = payload["agent"] as? String ?? ""
+            mutateProviders { providers in
+                providers.map { p in
+                    var m = p
+                    if var acc = m["account"] as? [String: Any], (acc["agent"] as? String) == targetAgent, var logins = acc["logins"] as? [[String: Any]] {
+                        logins = logins.map { l in
+                            var lm = l
+                            if (lm["user"] as? String)?.caseInsensitiveCompare(targetUser) == .orderedSame {
+                                lm["on"] = enable
+                                lm["paused"] = !enable && ((lm["active"] as? Bool) == true)
+                            }
+                            return lm
+                        }
+                        acc["logins"] = logins
+                        m["account"] = acc
+                    }
+                    return m
+                }
+            }
+            json(connection, snapshot("/api/providers")!)
         }
-        else if path.hasPrefix("/api/caller-keys/") { json(connection, responses["/api/caller-keys"]!) }
-        else { json(connection, responses["/api/state"]!) }
+        else if path.hasPrefix("/api/login/") || path.hasPrefix("/api/codex/daemon/") {
+            json(connection, snapshot("/api/providers")!)
+        }
+        else if path.hasPrefix("/api/caller-keys/") { json(connection, snapshot("/api/caller-keys")!) }
+        else { json(connection, snapshot("/api/state")!) }
     }
 }

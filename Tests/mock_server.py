@@ -83,7 +83,7 @@ AGY_PROVIDER = {
     "id": "antigravity",
     "name": "Antigravity (谷歌反重力)",
     "ready": True,
-    "routing": "usage",
+    "routing": "order",
     "models": [
         {"id": "gemini-2.5-pro", "name": "Gemini 2.5 Pro", "on": True, "context": 1000000}
     ],
@@ -98,7 +98,12 @@ AGY_PROVIDER = {
             {"agent": "antigravity", "user": "demo2@gmail.com", "plan": "free", "active": False, "on": True}
         ]
     },
-    "accountWeights": {"demo1@gmail.com": 2}
+    "accountWeights": {"demo1@gmail.com": 2, "demo2@gmail.com": 1},
+    "accountRests": {
+        "demo2@gmail.com": [
+            {"why": "rate", "status": 429, "until": "2026-11-17T22:15:00+08:00", "rate": True, "key": "antigravity#demo2@gmail.com"}
+        ]
+    }
 }
 PLUGIN_SUB = {
     "id": "trae-cn",
@@ -305,6 +310,10 @@ RESPONSES = {
     "/api/state": STATE,
     "/api/settings": SETTINGS,
     "/api/providers": {"providers": [PROVIDER, AGY_PROVIDER], "presets": [PRESET], "plugins": [PLUGIN_SUB], "gateway": {"running": True, "url": "http://127.0.0.1:3425"}},
+    "/api/plugins/listings": {"listings": [
+        {"package": "@magpie-community/opencode-zen-free-auth", "name": "OpenCode Zen Free", "icon": "opencode", "providers": ["opencode-zen-free"], "community": True, "summary": {"zh": "使用 public 凭证接入 OpenCode Zen 免费模型"}},
+        {"package": "@magpie-community/opencode-agy-cli-auth", "name": "Antigravity (local agy CLI)", "icon": "antigravity-color", "providers": ["agy-cli"], "community": True, "summary": {"zh": "通过本机 agy CLI 安全接入 Google Antigravity"}}
+    ]},
     "/api/login/usage": LOGIN_USAGE,
     "/api/signin/s1": SIGNIN_STATE,
     "/api/groups": {

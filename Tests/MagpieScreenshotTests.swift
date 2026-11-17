@@ -41,9 +41,17 @@ final class MagpieScreenshotTests: XCTestCase {
             return true
         }
         if scroll {
-            for _ in 0..<12 {
+            let scroller = app.scrollViews.firstMatch
+            for _ in 0..<18 {
                 if matches.allElementsBoundByIndex.contains(where: visible) { break }
-                if matches.firstMatch.exists && matches.firstMatch.frame.midY < app.frame.midY && !matches.firstMatch.frame.isEmpty {
+                let target = matches.allElementsBoundByIndex.first(where: { !$0.frame.isEmpty }) ?? matches.firstMatch
+                let midY = target.exists ? target.frame.midY : app.frame.midY
+                let topBound = scroller.exists ? scroller.frame.minY + 12 : app.frame.midY
+                if scroller.exists {
+                    let start = scroller.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: (target.exists && !target.frame.isEmpty && midY < topBound) ? 0.32 : 0.72))
+                    let end = scroller.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: (target.exists && !target.frame.isEmpty && midY < topBound) ? 0.72 : 0.32))
+                    start.press(forDuration: 0.03, thenDragTo: end)
+                } else if target.exists && !target.frame.isEmpty && midY < app.frame.midY {
                     app.swipeDown()
                 } else {
                     app.swipeUp()
@@ -204,15 +212,24 @@ final class MagpieScreenshotTests: XCTestCase {
         tab("providers", app: app)
         tap("OAuth 授权", app: app)
         XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["ChatGPT (Codex)"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Claude"].waitForExistence(timeout: 5))
         shot("26-oauth-platforms-demo")
         app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
         if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
             tap("仍然继续授权", app: app)
         }
+        XCTAssertTrue(app.staticTexts["2 个账号"].waitForExistence(timeout: 5))
         tap("发起浏览器 OAuth 授权登录", app: app)
         XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
         shot("27-antigravity-oauth-demo")
-        tap("关闭", app: app)
+        let cbField = app.textFields["http://localhost:1455/auth/callback?code=...&state=..."]
+        XCTAssertTrue(cbField.waitForExistence(timeout: 5))
+        cbField.tap()
+        cbField.typeText("http://127.0.0.1:54321/callback?code=demo-code&state=s1")
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
+        tap("完成并返回", app: app)
 
         let manageButtons = app.buttons.matching(identifier: "管理")
         XCTAssertGreaterThan(manageButtons.count, 1, "Expected second provider (Antigravity)")
@@ -222,10 +239,20 @@ final class MagpieScreenshotTests: XCTestCase {
         XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
         tap("多账号号池", app: app)
         XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
+        if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
+            tap("解除冷却", app: app, scroll: true)
+        }
+        tap("Rotate 逐轮轮询", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["参与轮询"].waitForExistence(timeout: 10))
         shot("28-subscription-multi-account-demo")
         tap("关闭", app: app)
         let signInReq = payload("/api/signin")
         XCTAssertEqual(signInReq["agent"] as? String, "antigravity")
+        XCTAssertEqual(payload("/api/signin/s1/callback")["url"] as? String, "http://127.0.0.1:54321/callback?code=demo-code&state=s1")
+        XCTAssertEqual(payload("/api/gateway/unrest")["key"] as? String, "antigravity#demo2@gmail.com")
+        XCTAssertEqual(payload("/api/provider/route")["routing"] as? String, "rotate")
 
         let provider = payload("/api/provider/save")
         XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
