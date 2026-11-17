@@ -153,6 +153,12 @@ struct SubscriptionSignInSheet: View {
                         dismiss()
                     }
                 }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("收起键盘") {
+                        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    }
+                }
             }
             .onAppear { setupInitialPhase() }
             .onDisappear { pollTask?.cancel() }

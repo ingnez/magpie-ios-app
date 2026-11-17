@@ -211,52 +211,7 @@ final class MagpieScreenshotTests: XCTestCase {
         shot("20-console-context-selection-demo")
         tap("关闭", app: app)
         tab("providers", app: app)
-        tap("OAuth 授权", app: app)
-        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["ChatGPT (Codex)"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Claude"].waitForExistence(timeout: 5))
-        shot("26-oauth-platforms-demo")
-        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
-        if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
-            tap("仍然继续授权", app: app)
-        }
-        XCTAssertTrue(app.staticTexts["2 个账号"].waitForExistence(timeout: 5))
-        tap("startOAuthButton", app: app, scroll: true)
-        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
-        shot("27-antigravity-oauth-demo")
-        let cbField = app.textFields["oauthCallbackField"]
-        XCTAssertTrue(cbField.waitForExistence(timeout: 5))
-        for _ in 0..<6 where !cbField.isHittable { app.swipeUp() }
-        cbField.tap()
-        cbField.typeText("http://127.0.0.1:54321/callback?code=demo-code&state=s1")
-        tap("提交并完成登录", app: app, scroll: true)
-        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
-        tap("完成并返回", app: app)
-
-        let manageButtons = app.buttons.matching(identifier: "管理")
-        XCTAssertGreaterThan(manageButtons.count, 1, "Expected second provider (Antigravity)")
-        let agyManage = manageButtons.element(boundBy: 1)
-        for _ in 0..<4 where !agyManage.isHittable { app.swipeUp() }
-        if agyManage.isHittable { agyManage.tap() } else { agyManage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
-        tap("多账号号池", app: app)
-        XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
-        tap("Rotate 逐轮轮询", app: app, scroll: true)
-        XCTAssertTrue(app.staticTexts["参与轮询"].waitForExistence(timeout: 10))
-        if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
-            tap("解除冷却", app: app, scroll: true)
-            let unrestDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["解除冷却"])
-            XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
-        }
-        shot("28-subscription-multi-account-demo")
-        tap("关闭", app: app)
-        let signInReq = payload("/api/signin")
-        XCTAssertEqual(signInReq["agent"] as? String, "antigravity")
-        XCTAssertEqual(payload("/api/signin/s1/callback")["url"] as? String, "http://127.0.0.1:54321/callback?code=demo-code&state=s1")
-        XCTAssertEqual(payload("/api/gateway/unrest")["key"] as? String, "antigravity#demo2@gmail.com")
-        XCTAssertEqual(payload("/api/provider/route")["routing"] as? String, "rotate")
+        try exerciseOAuthAccounts(app: app, server: server)
 
         let provider = payload("/api/provider/save")
         XCTAssertEqual((provider["headers"] as? [String: String])?["X-Project"], "test")
@@ -286,4 +241,78 @@ final class MagpieScreenshotTests: XCTestCase {
             "Missing general settings POST /api/settings"
         )
     }
+
+    func testCaptureOAuthAccounts() throws {
+        let server = try FixtureHTTPServer()
+        fixture = server
+        let app = XCUIApplication()
+        app.launch()
+        tap("连接 magpie web", app: app)
+        let name = app.textFields["例如：家里 NAS / 云服务器"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("OAuth 演示实例")
+        let address = app.textFields["https://your-host:3430/?k=..."]
+        address.tap(); address.typeText("http://127.0.0.1:\(server.port)/?k=fixture-only-not-a-real-key")
+        tap("保存并连接", app: app)
+        XCTAssertTrue(app.staticTexts["1 模型在线"].waitForExistence(timeout: 20))
+        tab("providers", app: app)
+        try exerciseOAuthAccounts(app: app, server: server)
+    }
+
+    private func exerciseOAuthAccounts(app: XCUIApplication, server: FixtureHTTPServer) throws {
+        func payload(_ path: String) -> [String: Any] {
+            let row = server.requests().last { $0["path"] as? String == path }
+            XCTAssertNotNil(row, "UI must call \(path)")
+            return row?["body"] as? [String: Any] ?? [:]
+        }
+        tap("OAuth 授权", app: app)
+        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["ChatGPT (Codex)"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Claude"].waitForExistence(timeout: 5))
+        shot("26-oauth-platforms-demo")
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
+        if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
+            tap("仍然继续授权", app: app)
+        }
+        XCTAssertTrue(app.staticTexts["2 个账号"].waitForExistence(timeout: 5))
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        shot("27-antigravity-oauth-demo")
+        let cbField = app.textFields["oauthCallbackField"]
+        XCTAssertTrue(cbField.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !cbField.isHittable { app.swipeUp() }
+        cbField.tap()
+        cbField.typeText("http://127.0.0.1:54321/callback?code=demo-code&state=s1")
+        tap("收起键盘", app: app)
+        tap("提交并完成登录", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 10))
+        tap("完成并返回", app: app)
+
+        let manageButtons = app.buttons.matching(identifier: "管理")
+        XCTAssertGreaterThan(manageButtons.count, 1, "Expected second provider (Antigravity)")
+        let agyManage = manageButtons.element(boundBy: 1)
+        for _ in 0..<4 where !agyManage.isHittable { app.swipeUp() }
+        if agyManage.isHittable { agyManage.tap() } else { agyManage.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        XCTAssertTrue(app.buttons["多账号号池"].waitForExistence(timeout: 10))
+        tap("多账号号池", app: app)
+        XCTAssertTrue(app.staticTexts["demo1@gmail.com"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["demo3@gmail.com"].waitForExistence(timeout: 5))
+        tap("Rotate 逐轮轮询", app: app, scroll: true)
+        XCTAssertTrue(app.staticTexts.matching(identifier: "参与轮询").firstMatch.waitForExistence(timeout: 10))
+        if app.buttons["解除冷却"].waitForExistence(timeout: 5) {
+            tap("解除冷却", app: app, scroll: true)
+            let unrestDone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.buttons["解除冷却"])
+            XCTAssertEqual(XCTWaiter.wait(for: [unrestDone], timeout: 10), .completed)
+        }
+        shot("28-subscription-multi-account-demo")
+        tap("关闭", app: app)
+        let signInReq = payload("/api/signin")
+        XCTAssertEqual(signInReq["agent"] as? String, "antigravity")
+        XCTAssertEqual(payload("/api/signin/s1/callback")["url"] as? String, "http://127.0.0.1:54321/callback?code=demo-code&state=s1")
+        XCTAssertEqual(payload("/api/gateway/unrest")["key"] as? String, "antigravity#demo2@gmail.com")
+        XCTAssertEqual(payload("/api/provider/route")["routing"] as? String, "rotate")
+
+    }
+
 }
