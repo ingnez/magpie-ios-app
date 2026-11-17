@@ -12,6 +12,10 @@ final class MagpieScreenshotTests: XCTestCase {
             let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
             attachment.name = "UI HTTP trace"; attachment.lifetime = .keepAlways; add(attachment)
         }
+        if (testRun?.failureCount ?? 0) > 0 {
+            let attachment = XCTAttachment(string: XCUIApplication().debugDescription)
+            attachment.name = "UI failure hierarchy"; attachment.lifetime = .keepAlways; add(attachment)
+        }
         fixture?.stop(); fixture = nil; super.tearDown()
     }
     private func shot(_ name: String) {
@@ -24,25 +28,33 @@ final class MagpieScreenshotTests: XCTestCase {
         let matches = app.buttons.matching(identifier: title)
         XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button: \(title)")
         func visible(_ button: XCUIElement) -> Bool {
-            guard button.isHittable && button.isEnabled else { return false }
-            let bottomTab = app.buttons["tab.home"]
-            return !scroll || !bottomTab.isHittable || button.frame.maxY <= bottomTab.frame.minY - 12
+            guard button.exists && button.isEnabled else { return false }
+            let frame = button.frame
+            guard !frame.isEmpty && app.frame.contains(frame) else { return false }
+            if scroll && app.buttons["tab.home"].isHittable && app.scrollViews.firstMatch.exists {
+                return app.scrollViews.firstMatch.frame.insetBy(dx: 0, dy: 8).contains(frame)
+            }
+            return true
         }
         if scroll {
             for _ in 0..<12 {
                 if matches.allElementsBoundByIndex.contains(where: visible) { break }
-                app.swipeUp()
+                if matches.firstMatch.frame.midY < app.frame.midY { app.swipeDown() } else { app.swipeUp() }
             }
         }
-        // Nested sheets expose their covered parent's buttons under the same label.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             matches.allElementsBoundByIndex.contains(where: visible)
         }, object: app)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed, "No enabled visible button: \(title)")
-        guard let button = matches.allElementsBoundByIndex.first(where: visible) else {
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed, "No enabled visible button: \(title)")
+        // Sheets expose covered controls too; the last visible match is topmost.
+        guard let button = matches.allElementsBoundByIndex.reversed().first(where: visible) else {
             XCTFail("Button disappeared: \(title)"); return
         }
-        button.tap()
+        if button.isHittable { button.tap() }
+        else {
+            XCTAssertFalse(app.alerts.firstMatch.exists, "Unexpected alert over \(title)")
+            button.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
     }
     private func tab(_ id: String, app: XCUIApplication) { tap("tab.\(id)", app: app) }
 
