@@ -65,7 +65,7 @@ final class GatewayStore: ObservableObject {
                 kind: .localOnly,
                 latencyMs: nil,
                 statusCode: nil,
-                message: "未激活上游配置，当前处于 127.0.0.1:3425 本地回环模式",
+                message: "本地 127.0.0.1:3425 回环就绪",
                 checkedAt: nil
             )
         }
@@ -76,7 +76,7 @@ final class GatewayStore: ObservableObject {
         toastTask?.cancel()
         toastMessage = message
         toastTask = Task {
-            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             if !Task.isCancelled {
                 toastMessage = nil
             }
@@ -104,7 +104,7 @@ final class GatewayStore: ObservableObject {
             }
         } catch {
             statusSnapshot.daemonOnline = false
-            statusSnapshot.lastError = "本地网关端口 127.0.0.1:3425 未响应：\(error.localizedDescription)"
+            statusSnapshot.lastError = "本地端口 127.0.0.1:3425 未响应：\(error.localizedDescription)"
         }
     }
 
@@ -121,7 +121,7 @@ final class GatewayStore: ObservableObject {
     ) -> Result<ProxyProfile, ProfileSaveError> {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedName.isEmpty {
-            return .failure(.message("请填写配置名称（例如：主力中转 / 本地 Ollama）"))
+            return .failure(.message("请填写配置名称"))
         }
 
         let urlCheck = URLValidator.validateAndNormalize(rawBaseURL)
@@ -172,9 +172,7 @@ final class GatewayStore: ObservableObject {
         persistProfiles()
         syncActiveProfileToGateway()
         showToast("已切换至「\(profile.name)」")
-        Task {
-            await probeConnection(for: profile)
-        }
+        Task { await probeConnection(for: profile) }
     }
 
     func deactivateToLocalLoopback() {
@@ -198,7 +196,7 @@ final class GatewayStore: ObservableObject {
     func updateActiveDefaultModel(_ modelID: String) {
         guard let activeID = activeProfileID,
               let idx = profiles.firstIndex(where: { $0.id == activeID }) else {
-            showToast("请先在「配置」中激活一套反代配置")
+            showToast("请先激活一套反代配置")
             return
         }
         profiles[idx].defaultModel = modelID
@@ -208,7 +206,7 @@ final class GatewayStore: ObservableObject {
         showToast("默认模型已设为 \(modelID)")
     }
 
-    // MARK: - Connection Probe
+    // MARK: - Connection Probe & Models
 
     func probeActiveConnection() async {
         guard let profile = activeProfile else {
@@ -221,7 +219,7 @@ final class GatewayStore: ObservableObject {
     @discardableResult
     func probeConnection(for profile: ProxyProfile) async -> ConnectionHealth {
         healthByProfile[profile.id] = .checking
-        let result = await Self.executeProbe(
+        let result = await UpstreamClient.probe(
             rawBaseURL: profile.baseURL,
             apiKey: profile.apiKey,
             targetProtocol: profile.targetProtocol
@@ -229,113 +227,6 @@ final class GatewayStore: ObservableObject {
         healthByProfile[profile.id] = result
         return result
     }
-
-    static func executeProbe(
-        rawBaseURL: String,
-        apiKey: String,
-        targetProtocol: MagpieProtocol
-    ) async -> ConnectionHealth {
-        let validation = URLValidator.validateAndNormalize(rawBaseURL)
-        guard case .valid(let baseURL) = validation else {
-            return ConnectionHealth(
-                kind: .failed,
-                latencyMs: nil,
-                statusCode: nil,
-                message: validation.errorReason ?? "服务器地址校验失败",
-                checkedAt: Date()
-            )
-        }
-
-        let cleanKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let probeURLString: String
-        switch targetProtocol {
-        case .geminiV1Beta:
-            let encoded = cleanKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanKey
-            probeURLString = "\(baseURL)/v1beta/models?key=\(encoded)"
-        default:
-            probeURLString = baseURL.hasSuffix("/v1") ? "\(baseURL)/models" : "\(baseURL)/v1/models"
-        }
-
-        guard let url = URL(string: probeURLString) else {
-            return ConnectionHealth(
-                kind: .failed,
-                latencyMs: nil,
-                statusCode: nil,
-                message: "无法构造探测地址：\(probeURLString)",
-                checkedAt: Date()
-            )
-        }
-
-        var req = URLRequest(url: url, timeoutInterval: 10)
-        req.httpMethod = "GET"
-        switch targetProtocol {
-        case .openAIChat, .openAIResponses:
-            if !cleanKey.isEmpty { req.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization") }
-        case .anthropicMessages:
-            if !cleanKey.isEmpty {
-                req.setValue(cleanKey, forHTTPHeaderField: "x-api-key")
-                req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            }
-        case .geminiV1Beta:
-            break
-        }
-
-        let start = CFAbsoluteTimeGetCurrent()
-        do {
-            let (data, response) = try await URLSession.shared.data(for: req)
-            let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            guard let httpResp = response as? HTTPURLResponse else {
-                return ConnectionHealth(
-                    kind: .failed,
-                    latencyMs: latency,
-                    statusCode: nil,
-                    message: "服务器未返回有效 HTTP 响应",
-                    checkedAt: Date()
-                )
-            }
-
-            if (200..<300).contains(httpResp.statusCode) {
-                let modelCount = Self.countModels(in: data)
-                let msg = modelCount > 0
-                    ? "上游连通正常 · 探测到 \(modelCount) 个可用模型"
-                    : "上游接口握手成功（HTTP \(httpResp.statusCode)）"
-                return ConnectionHealth(
-                    kind: .connected,
-                    latencyMs: latency,
-                    statusCode: httpResp.statusCode,
-                    message: msg,
-                    checkedAt: Date()
-                )
-            } else {
-                let errText = MagpieLocalGateway.extractHTTPErrorMessage(statusCode: httpResp.statusCode, data: data)
-                return ConnectionHealth(
-                    kind: .failed,
-                    latencyMs: latency,
-                    statusCode: httpResp.statusCode,
-                    message: errText,
-                    checkedAt: Date()
-                )
-            }
-        } catch {
-            let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            return ConnectionHealth(
-                kind: .failed,
-                latencyMs: latency,
-                statusCode: nil,
-                message: MagpieLocalGateway.describeNetworkError(error),
-                checkedAt: Date()
-            )
-        }
-    }
-
-    private static func countModels(in data: Data) -> Int {
-        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return 0 }
-        if let arr = json["data"] as? [[String: Any]] { return arr.count }
-        if let arr = json["models"] as? [[String: Any]] { return arr.count }
-        return 0
-    }
-
-    // MARK: - Models Panel (/v1/models)
 
     func fetchModels(forceLocalFallback: Bool = false) async {
         isLoadingModels = true
@@ -351,34 +242,15 @@ final class GatewayStore: ObservableObject {
                 return
             }
 
-            let cleanKey = profile.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-            let urlStr: String
-            switch profile.targetProtocol {
-            case .geminiV1Beta:
-                let encoded = cleanKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? cleanKey
-                urlStr = "\(baseURL)/v1beta/models?key=\(encoded)"
-            default:
-                urlStr = baseURL.hasSuffix("/v1") ? "\(baseURL)/models" : "\(baseURL)/v1/models"
-            }
-
-            guard let url = URL(string: urlStr) else {
-                modelsError = "无效的模型接口 URL：\(urlStr)"
+            let endpoint = profile.targetProtocol.modelsEndpoint(baseURL: baseURL, apiKey: profile.apiKey)
+            guard let url = URL(string: endpoint) else {
+                modelsError = "无效的模型接口地址"
                 return
             }
 
             var req = URLRequest(url: url, timeoutInterval: 15)
             req.httpMethod = "GET"
-            switch profile.targetProtocol {
-            case .openAIChat, .openAIResponses:
-                if !cleanKey.isEmpty { req.setValue("Bearer \(cleanKey)", forHTTPHeaderField: "Authorization") }
-            case .anthropicMessages:
-                if !cleanKey.isEmpty {
-                    req.setValue(cleanKey, forHTTPHeaderField: "x-api-key")
-                    req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-                }
-            case .geminiV1Beta:
-                break
-            }
+            profile.targetProtocol.applyAuthHeaders(to: &req, apiKey: profile.apiKey)
 
             let start = CFAbsoluteTimeGetCurrent()
             do {
@@ -390,7 +262,7 @@ final class GatewayStore: ObservableObject {
                     return
                 }
                 guard (200..<300).contains(http.statusCode) else {
-                    let msg = MagpieLocalGateway.extractHTTPErrorMessage(statusCode: http.statusCode, data: data)
+                    let msg = UpstreamClient.extractHTTPErrorMessage(statusCode: http.statusCode, data: data)
                     modelsError = msg
                     healthByProfile[profile.id] = ConnectionHealth(
                         kind: .failed,
@@ -402,12 +274,12 @@ final class GatewayStore: ObservableObject {
                     return
                 }
 
-                let parsed = Self.parseModelsPayload(data: data, source: profile.name)
+                let parsed = UpstreamClient.parseModelsPayload(data: data, source: profile.name)
                 if parsed.isEmpty {
-                    modelsError = "上游返回 HTTP \(http.statusCode)，但模型列表为空或字段格式不兼容"
+                    modelsError = "上游返回 HTTP \(http.statusCode)，但模型列表为空"
                 } else {
                     models = parsed
-                    modelsSourceLabel = "上游实时拉取 · \(profile.name)"
+                    modelsSourceLabel = "\(profile.name) · 实时"
                     healthByProfile[profile.id] = ConnectionHealth(
                         kind: .connected,
                         latencyMs: latency,
@@ -420,7 +292,7 @@ final class GatewayStore: ObservableObject {
             } catch {
                 let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
                 modelsLatencyMs = latency
-                let msg = MagpieLocalGateway.describeNetworkError(error)
+                let msg = UpstreamClient.describeNetworkError(error)
                 modelsError = msg
                 healthByProfile[profile.id] = ConnectionHealth(
                     kind: .failed,
@@ -433,46 +305,21 @@ final class GatewayStore: ObservableObject {
             }
         }
 
-        // Local gateway /v1/models
         guard let localURL = URL(string: "http://127.0.0.1:3425/v1/models") else { return }
         let start = CFAbsoluteTimeGetCurrent()
         do {
             let (data, response) = try await URLSession.shared.data(for: URLRequest(url: localURL, timeoutInterval: 5))
-            let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            modelsLatencyMs = latency
+            modelsLatencyMs = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 modelsError = "本地网关 /v1/models 返回异常"
                 return
             }
-            models = Self.parseModelsPayload(data: data, source: "本地网关")
-            modelsSourceLabel = forceLocalFallback ? "本地内置模型列表" : "本地网关 /v1/models"
+            models = UpstreamClient.parseModelsPayload(data: data, source: "本地内置")
+            modelsSourceLabel = forceLocalFallback ? "本地内置目录" : "127.0.0.1:3425 内置目录"
         } catch {
-            modelsError = "本地网关 127.0.0.1:3425 不可达：\(error.localizedDescription)"
+            modelsError = "本地网关不可达：\(error.localizedDescription)"
         }
     }
-
-    private static func parseModelsPayload(data: Data, source: String) -> [MagpieModelItem] {
-        guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            return []
-        }
-        if let arr = json["data"] as? [[String: Any]] {
-            return arr.compactMap { row in
-                guard let id = row["id"] as? String, !id.isEmpty else { return nil }
-                let owner = (row["owned_by"] as? String) ?? "upstream"
-                return MagpieModelItem(id: id, ownedBy: owner, source: source)
-            }.sorted { $0.id < $1.id }
-        }
-        if let arr = json["models"] as? [[String: Any]] {
-            return arr.compactMap { row in
-                guard let name = row["name"] as? String, !name.isEmpty else { return nil }
-                let clean = name.replacingOccurrences(of: "models/", with: "")
-                return MagpieModelItem(id: clean, ownedBy: "google-gemini", source: source)
-            }.sorted { $0.id < $1.id }
-        }
-        return []
-    }
-
-    // MARK: - End-to-End Local Gateway Smoke Test
 
     func runGatewaySmokeTest(route: String, prompt: String, model: String) async -> (ok: Bool, statusCode: Int, latencyMs: Int, output: String) {
         let cleanRoute = route.hasPrefix("/") ? route : "/\(route)"
@@ -488,26 +335,14 @@ final class GatewayStore: ObservableObject {
             let bodyDict: [String: Any]
             switch cleanRoute {
             case "/v1/messages":
-                bodyDict = [
-                    "model": model,
-                    "max_tokens": 512,
-                    "messages": [["role": "user", "content": prompt]]
-                ]
+                bodyDict = ["model": model, "max_tokens": 512, "messages": [["role": "user", "content": prompt]]]
             case "/v1/responses":
-                bodyDict = [
-                    "model": model,
-                    "input": prompt
-                ]
+                bodyDict = ["model": model, "input": prompt]
             default:
                 if cleanRoute.hasPrefix("/v1beta/models") {
-                    bodyDict = [
-                        "contents": [["role": "user", "parts": [["text": prompt]]]]
-                    ]
+                    bodyDict = ["contents": [["role": "user", "parts": [["text": prompt]]]]]
                 } else {
-                    bodyDict = [
-                        "model": model,
-                        "messages": [["role": "user", "content": prompt]]
-                    ]
+                    bodyDict = ["model": model, "messages": [["role": "user", "content": prompt]]]
                 }
             }
             req.httpBody = try? JSONSerialization.data(withJSONObject: bodyDict)
@@ -518,12 +353,11 @@ final class GatewayStore: ObservableObject {
             let (data, response) = try await URLSession.shared.data(for: req)
             let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let pretty = Self.prettyJSONString(from: data)
             refreshGatewayState()
-            return ((200..<300).contains(code), code, latency, pretty)
+            return ((200..<300).contains(code), code, latency, Self.prettyJSONString(from: data))
         } catch {
             let latency = max(1, Int((CFAbsoluteTimeGetCurrent() - start) * 1000))
-            return (false, 0, latency, MagpieLocalGateway.describeNetworkError(error))
+            return (false, 0, latency, UpstreamClient.describeNetworkError(error))
         }
     }
 
@@ -563,8 +397,7 @@ final class GatewayStore: ObservableObject {
     }
 
     private func persistProfiles() {
-        let encoder = JSONEncoder()
-        if let data = try? encoder.encode(profiles) {
+        if let data = try? JSONEncoder().encode(profiles) {
             UserDefaults.standard.set(data, forKey: profilesKey)
         }
         if let id = activeProfileID {

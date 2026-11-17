@@ -4,12 +4,12 @@ struct LogsPrivacyView: View {
     @ObservedObject var store: GatewayStore
     @State private var logFilter: LogFilter = .all
     @State private var expandedLogID: UUID?
-    @State private var sampleInput: String = "测试密钥 sk-proj-998877665544，邮箱 admin@hospital.org，手机 13800138000"
+    @State private var sampleInput: String = "密钥 sk-proj-998877665544，邮箱 admin@hospital.org，手机 13800138000"
 
     enum LogFilter: String, CaseIterable {
         case all = "全部"
-        case errors = "仅报错"
-        case masked = "触发脱敏"
+        case errors = "错误"
+        case masked = "脱敏"
     }
 
     private var filteredLogs: [GatewayLogEntry] {
@@ -28,254 +28,165 @@ struct LogsPrivacyView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 14) {
-                privacyControlCard
-                logsHeaderCard
+            VStack(alignment: .leading, spacing: 24) {
+                Text("隐私与日志")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundColor(MagpieTheme.ink)
 
-                if filteredLogs.isEmpty {
-                    MagpieCard {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(store.logs.isEmpty ? "暂无网关请求记录" : "当前筛选条件下无记录")
-                                .font(.system(size: 14.5, weight: .bold))
-                                .foregroundColor(MagpieTheme.textPrimary)
-                            Text("当外部客户端或应用内自检请求 127.0.0.1:3425 的接口时，每次路由转换、延迟、脱敏次数和报错详情都会实时记录在此处。")
-                                .font(.system(size: 12))
-                                .foregroundColor(MagpieTheme.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                } else {
-                    LazyVStack(spacing: 10) {
-                        ForEach(filteredLogs) { entry in
-                            logRowCard(entry)
-                        }
-                    }
-                }
+                privacySection
+                logsSection
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.horizontal, 22)
+            .padding(.top, 24)
             .padding(.bottom, 100)
         }
     }
 
-    // MARK: - Privacy Masking Card
-
-    private var privacyControlCard: some View {
-        MagpieCard(elevated: true, borderColor: store.privacySettings.enabled ? MagpieTheme.amber.opacity(0.45) : MagpieTheme.border) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("隐私脱敏引擎")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(MagpieTheme.textPrimary)
-                    Text(store.privacySettings.enabled ? "出站前自动替换为恒定占位符，回包时自动还原" : "当前已关闭，明文直通上游")
+    private var privacySection: some View {
+        MinimalSection(title: "隐私脱敏规则", trailingText: store.privacySettings.enabled ? "已开启" : "已关闭") {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("双向脱敏引擎")
+                        .font(.system(size: 14.5, weight: .medium))
+                        .foregroundColor(MagpieTheme.ink)
+                    Text("出站替换为占位符，响应自动还原")
                         .font(.system(size: 12))
-                        .foregroundColor(MagpieTheme.textSecondary)
+                        .foregroundColor(MagpieTheme.textMuted)
                 }
                 Spacer()
-                MagpieToggle(isOn: $store.privacySettings.enabled, accent: MagpieTheme.amber)
+                MagpieToggle(isOn: $store.privacySettings.enabled)
             }
 
             if store.privacySettings.enabled {
-                Divider().background(MagpieTheme.border)
+                Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
-                VStack(spacing: 10) {
-                    ruleToggleRow(
-                        title: "API Key / Bearer 密钥",
-                        subtitle: "匹配 sk-..., AIza..., ghp_... 与 Bearer Token",
-                        isOn: $store.privacySettings.maskAPIKeys
-                    )
-                    ruleToggleRow(
-                        title: "电子邮箱地址",
-                        subtitle: "匹配标准 email 格式并替换为 {{EMAIL_n}}",
-                        isOn: $store.privacySettings.maskEmails
-                    )
-                    ruleToggleRow(
-                        title: "中国大陆手机号",
-                        subtitle: "匹配 11 位手机号码并替换为 {{PHONE_n}}",
-                        isOn: $store.privacySettings.maskPhones
-                    )
-                }
+                ruleRow("API 密钥与 Token", isOn: $store.privacySettings.maskAPIKeys)
+                ruleRow("电子邮箱地址", isOn: $store.privacySettings.maskEmails)
+                ruleRow("手机号码", isOn: $store.privacySettings.maskPhones)
 
                 MagpieInputField(
                     label: "自定义敏感词（逗号分隔）",
-                    placeholder: "例如：内部域名, 病人姓名, 工号",
+                    placeholder: "例如：内部域名, 姓名",
                     text: $store.privacySettings.customKeywordsText
                 )
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("脱敏效果实时预览")
-                            .font(.system(size: 12, weight: .semibold))
+                        Text("脱敏预览")
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(MagpieTheme.textSecondary)
                         Spacer()
-                        MagpieBadge(
-                            text: "命中 \(liveMaskPreview.count) 处",
-                            color: liveMaskPreview.count > 0 ? MagpieTheme.teal : MagpieTheme.textMuted
-                        )
+                        Text("命中 \(liveMaskPreview.count) 处")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundColor(MagpieTheme.textMuted)
                     }
-
-                    TextField("输入含敏感内容的测试文本…", text: $sampleInput)
-                        .font(.system(size: 12.5))
-                        .foregroundColor(MagpieTheme.textPrimary)
-                        .padding(10)
-                        .background(MagpieTheme.input)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .stroke(MagpieTheme.border, lineWidth: 1)
-                        )
-
-                    Text("发往上游：\(liveMaskPreview.maskedText)")
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundColor(MagpieTheme.teal)
+                    Text(liveMaskPreview.maskedText)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(MagpieTheme.textSecondary)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(MagpieTheme.input)
-                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        .background(MagpieTheme.canvas)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 }
             }
         }
     }
 
-    private func ruleToggleRow(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundColor(MagpieTheme.textPrimary)
-                Text(subtitle)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(MagpieTheme.textMuted)
-            }
+    private func ruleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13.5))
+                .foregroundColor(MagpieTheme.ink)
             Spacer()
-            MagpieToggle(isOn: isOn, accent: MagpieTheme.teal)
+            MagpieToggle(isOn: isOn)
         }
     }
 
-    // MARK: - Logs List
-
-    private var logsHeaderCard: some View {
-        MagpieCard {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("网关请求日志 (\(filteredLogs.count))")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(MagpieTheme.textPrimary)
-                    Text("实时记录本地 127.0.0.1:3425 转发与转换明细")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(MagpieTheme.textSecondary)
+    private var logsSection: some View {
+        MinimalSection(title: "请求日志 (\(filteredLogs.count))") {
+            HStack(spacing: 6) {
+                ForEach(LogFilter.allCases, id: \.self) { f in
+                    let selected = logFilter == f
+                    Button(f.rawValue) {
+                        logFilter = f
+                    }
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
+                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
                 }
                 Spacer()
                 if !store.logs.isEmpty {
                     Button("清空") {
                         store.clearLogs()
                     }
-                    .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
+                    .font(.system(size: 12))
+                    .foregroundColor(MagpieTheme.textMuted)
+                    .buttonStyle(.plain)
                 }
             }
 
-            HStack(spacing: 8) {
-                ForEach(LogFilter.allCases, id: \.self) { f in
-                    let selected = logFilter == f
-                    Button(f.rawValue) {
-                        logFilter = f
-                    }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(selected ? MagpieTheme.canvas : MagpieTheme.textSecondary)
-                    .padding(.horizontal, 12)
+            if filteredLogs.isEmpty {
+                Text("暂无请求记录")
+                    .font(.system(size: 13))
+                    .foregroundColor(MagpieTheme.textMuted)
                     .padding(.vertical, 6)
-                    .background(selected ? MagpieTheme.amber : MagpieTheme.input)
-                    .clipShape(Capsule())
-                    .overlay(
-                        Capsule()
-                            .stroke(selected ? MagpieTheme.amber : MagpieTheme.border, lineWidth: 1)
-                    )
-                    .buttonStyle(.plain)
+            } else {
+                ForEach(Array(filteredLogs.enumerated()), id: \.element.id) { idx, entry in
+                    if idx > 0 {
+                        Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
+                    }
+                    logRow(entry)
                 }
-                Spacer()
             }
         }
     }
 
-    private func logRowCard(_ entry: GatewayLogEntry) -> some View {
+    private func logRow(_ entry: GatewayLogEntry) -> some View {
         let isExpanded = expandedLogID == entry.id
         let isError = entry.outcome == .error || entry.statusCode >= 400
-        let statusColor: Color = isError ? MagpieTheme.coral : (entry.outcome == .localLoopback ? MagpieTheme.warning : MagpieTheme.teal)
 
-        return MagpieCard(
-            borderColor: isError ? MagpieTheme.coral.opacity(0.45) : MagpieTheme.border
-        ) {
+        return VStack(alignment: .leading, spacing: 6) {
             Button {
-                withAnimation(.easeOut(duration: 0.16)) {
+                withAnimation(.easeOut(duration: 0.15)) {
                     expandedLogID = isExpanded ? nil : entry.id
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        MagpieBadge(text: "\(entry.method) \(entry.statusCode)", color: statusColor, monospaced: true)
-                        Text(entry.path)
-                            .font(.system(size: 12.5, weight: .semibold, design: .monospaced))
-                            .foregroundColor(MagpieTheme.textPrimary)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(isError ? MagpieTheme.err : MagpieTheme.ok)
+                            .frame(width: 6, height: 6)
+                        Text("\(entry.method) \(entry.path)")
+                            .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                            .foregroundColor(MagpieTheme.ink)
                             .lineLimit(1)
                         Spacer()
-                        MagpieBadge(text: "\(entry.latencyMs) ms", color: MagpieTheme.textSecondary, monospaced: true)
-                    }
-
-                    HStack(spacing: 6) {
-                        Text("\(entry.inboundProtocol) → \(entry.targetProtocol)")
+                        Text("\(entry.statusCode) · \(entry.latencyMs) ms")
                             .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundColor(MagpieTheme.textSecondary)
-                        if !entry.model.isEmpty && entry.model != "-" {
-                            MagpieBadge(text: entry.model, color: MagpieTheme.amber, monospaced: true)
-                        }
-                        if entry.maskedCount > 0 {
-                            MagpieBadge(text: "脱敏 \(entry.maskedCount)", color: MagpieTheme.teal)
-                        }
-                        Spacer()
-                        Text(Self.timeFormatter.string(from: entry.timestamp))
-                            .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(MagpieTheme.textMuted)
                     }
 
-                    if let err = entry.errorMessage, !err.isEmpty {
-                        Text(err)
-                            .font(.system(size: 12))
-                            .foregroundColor(MagpieTheme.coral)
-                            .lineLimit(isExpanded ? nil : 2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text(entry.requestPreview)
-                            .font(.system(size: 12))
-                            .foregroundColor(MagpieTheme.textMuted)
-                            .lineLimit(isExpanded ? nil : 1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
+                    Text(entry.errorMessage ?? entry.requestPreview)
+                        .font(.system(size: 12))
+                        .foregroundColor(isError ? MagpieTheme.err : MagpieTheme.textSecondary)
+                        .lineLimit(isExpanded ? nil : 1)
                 }
             }
             .buttonStyle(.plain)
 
             if isExpanded {
-                Divider().background(MagpieTheme.border)
-                VStack(alignment: .leading, spacing: 6) {
-                    if !entry.upstreamURL.isEmpty {
-                        Text("上游目标：\(entry.upstreamURL)")
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundColor(MagpieTheme.textSecondary)
-                    }
-                    Text("请求摘要：\(entry.requestPreview)")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(MagpieTheme.textSecondary)
-                    Text("响应摘要：\(entry.responsePreview)")
-                        .font(.system(size: 11.5))
-                        .foregroundColor(isError ? MagpieTheme.coral : MagpieTheme.teal)
-                }
+                Text(entry.responsePreview)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .foregroundColor(MagpieTheme.textMuted)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(MagpieTheme.canvas)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         }
     }
-
-    private static let timeFormatter: DateFormatter = {
-        let df = DateFormatter()
-        df.dateFormat = "HH:mm:ss"
-        return df
-    }()
 }

@@ -2,7 +2,7 @@ import Foundation
 
 struct PrivacyMaskResult {
     var maskedText: String
-    var replacements: [String: String] // placeholder -> original
+    var replacements: [String: String]
     var count: Int
 }
 
@@ -37,11 +37,10 @@ enum PrivacyMasker {
         var totalHits = 0
 
         func replaceMatches(pattern: String, tag: String) {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
             let nsString = output as NSString
-            let range = NSRange(location: 0, length: nsString.length)
-            let matches = regex.matches(in: output, options: [], range: range)
-            if matches.isEmpty { return }
+            let matches = regex.matches(in: output, range: NSRange(location: 0, length: nsString.length))
+            guard !matches.isEmpty else { return }
 
             var mutable = output
             for match in matches.reversed() {
@@ -65,22 +64,18 @@ enum PrivacyMasker {
         }
 
         if settings.maskAPIKeys {
-            for pat in apiKeyPatterns {
-                replaceMatches(pattern: pat, tag: "API_KEY")
+            for pattern in apiKeyPatterns {
+                replaceMatches(pattern: pattern, tag: "API_KEY")
             }
         }
-
         if settings.maskEmails {
             replaceMatches(pattern: emailPattern, tag: "EMAIL")
         }
-
         if settings.maskPhones {
             replaceMatches(pattern: phonePattern, tag: "PHONE")
         }
-
         for keyword in settings.customKeywords {
-            let escaped = NSRegularExpression.escapedPattern(for: keyword)
-            replaceMatches(pattern: escaped, tag: "SECRET")
+            replaceMatches(pattern: NSRegularExpression.escapedPattern(for: keyword), tag: "SECRET")
         }
 
         return PrivacyMaskResult(maskedText: output, replacements: map, count: totalHits)
@@ -93,21 +88,23 @@ enum PrivacyMasker {
         var replacements: [String: String] = [:]
         var totalCount = 0
         var nextIdx = 1
+        let skippedKeys: Set<String> = ["model", "role", "type", "object"]
 
         func walk(_ node: Any, keyName: String?) -> Any {
             if let str = node as? String {
-                // Skip model names and role identifiers
-                if keyName == "model" || keyName == "role" || keyName == "type" || keyName == "object" {
+                if let keyName = keyName, skippedKeys.contains(keyName) {
                     return str
                 }
-                let res = maskText(str, settings: settings, existingReplacements: replacements, startingIndex: nextIdx)
-                replacements = res.replacements
+                let result = maskText(str, settings: settings, existingReplacements: replacements, startingIndex: nextIdx)
+                replacements = result.replacements
                 nextIdx = replacements.count + 1
-                totalCount += res.count
-                return res.maskedText
-            } else if let arr = node as? [Any] {
+                totalCount += result.count
+                return result.maskedText
+            }
+            if let arr = node as? [Any] {
                 return arr.map { walk($0, keyName: keyName) }
-            } else if let dict = node as? [String: Any] {
+            }
+            if let dict = node as? [String: Any] {
                 var out: [String: Any] = [:]
                 for (k, v) in dict {
                     out[k] = walk(v, keyName: k)
@@ -117,31 +114,26 @@ enum PrivacyMasker {
             return node
         }
 
-        let masked = walk(value, keyName: nil)
-        return (masked, replacements, totalCount)
+        return (walk(value, keyName: nil), replacements, totalCount)
     }
 
     static func unmaskText(_ text: String, replacements: [String: String]) -> String {
         guard !replacements.isEmpty, !text.isEmpty else { return text }
-        var output = text
-        for (placeholder, original) in replacements {
-            output = output.replacingOccurrences(of: placeholder, with: original)
+        return replacements.reduce(text) { acc, pair in
+            acc.replacingOccurrences(of: pair.key, with: pair.value)
         }
-        return output
     }
 
     static func unmaskJSONObject(_ value: Any, replacements: [String: String]) -> Any {
         guard !replacements.isEmpty else { return value }
         if let str = value as? String {
             return unmaskText(str, replacements: replacements)
-        } else if let arr = value as? [Any] {
+        }
+        if let arr = value as? [Any] {
             return arr.map { unmaskJSONObject($0, replacements: replacements) }
-        } else if let dict = value as? [String: Any] {
-            var out: [String: Any] = [:]
-            for (k, v) in dict {
-                out[k] = unmaskJSONObject(v, replacements: replacements)
-            }
-            return out
+        }
+        if let dict = value as? [String: Any] {
+            return dict.mapValues { unmaskJSONObject($0, replacements: replacements) }
         }
         return value
     }

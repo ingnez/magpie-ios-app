@@ -9,27 +9,42 @@ struct ProfilesView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(spacing: 14) {
-                headerCard
+            VStack(alignment: .leading, spacing: 24) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("反代配置")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundColor(MagpieTheme.ink)
+                        Text(store.profiles.isEmpty ? "尚未添加上游节点" : "共 \(store.profiles.count) 个节点 · 点击即可切换")
+                            .font(.system(size: 13))
+                            .foregroundColor(MagpieTheme.textSecondary)
+                    }
+                    Spacer()
+                    Button("新建") {
+                        presentingNewEditor = true
+                    }
+                    .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+                }
 
                 if store.profiles.isEmpty {
-                    emptyStateCard
+                    emptyStateBlock
                 } else {
-                    ForEach(store.profiles) { profile in
-                        profileCard(profile)
+                    VStack(spacing: 12) {
+                        ForEach(store.profiles) { profile in
+                            profileRow(profile)
+                        }
                     }
                 }
 
                 if store.activeProfile != nil {
-                    Button("切回本地回环模式（暂停转发上游）") {
+                    Button("切回本地回环模式") {
                         store.deactivateToLocalLoopback()
                     }
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
-                    .padding(.top, 4)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.horizontal, 22)
+            .padding(.top, 24)
             .padding(.bottom, 100)
         }
         .sheet(isPresented: $presentingNewEditor) {
@@ -39,7 +54,7 @@ struct ProfilesView: View {
             ProfileEditorSheet(store: store, existing: profile)
         }
         .alert(
-            "确认删除该反代配置？",
+            "删除配置？",
             isPresented: Binding(
                 get: { profilePendingDelete != nil },
                 set: { if !$0 { profilePendingDelete = nil } }
@@ -54,110 +69,68 @@ struct ProfilesView: View {
                 profilePendingDelete = nil
             }
         } message: { target in
-            Text("将永久移除「\(target.name)」(\(target.baseURL))。")
+            Text("将移除「\(target.name)」。")
         }
     }
 
-    private var headerCard: some View {
-        MagpieCard(elevated: true) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("反代服务器配置库")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(MagpieTheme.textPrimary)
-                    Text("支持多套上游独立命名、一键切换与实时连通探测")
-                        .font(.system(size: 12))
-                        .foregroundColor(MagpieTheme.textSecondary)
-                }
-                Spacer()
-                Button {
-                    presentingNewEditor = true
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "plus")
-                        Text("新建")
-                    }
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+    private var emptyStateBlock: some View {
+        MinimalSection {
+            Text("暂无上游服务器")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(MagpieTheme.ink)
+            Text("添加 OpenAI、Anthropic、Gemini 或自建反代地址后，所有客户端均可统一通过 127.0.0.1:3425 接入。")
+                .font(.system(size: 13))
+                .foregroundColor(MagpieTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("添加第一套配置") {
+                presentingNewEditor = true
             }
+            .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
+            .padding(.top, 2)
         }
     }
 
-    private var emptyStateCard: some View {
-        MagpieCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("尚未保存任何上游反代配置")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundColor(MagpieTheme.textPrimary)
-                Text("添加你的 OpenAI 中转、Anthropic、Gemini 或局域网自建反代节点后，Magpie 会自动校验地址并托管在 127.0.0.1:3425。")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(MagpieTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button {
-                    presentingNewEditor = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("立即添加第一套配置")
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(MagpieButtonStyle(tone: .primary))
-            }
-        }
-    }
-
-    private func profileCard(_ profile: ProxyProfile) -> some View {
+    private func profileRow(_ profile: ProxyProfile) -> some View {
         let isActive = store.activeProfileID == profile.id
         let health = store.healthByProfile[profile.id] ?? .untested
 
-        return MagpieCard(
-            elevated: isActive,
-            borderColor: isActive ? MagpieTheme.amber.opacity(0.65) : MagpieTheme.border
-        ) {
-            HStack(alignment: .top, spacing: 10) {
-                MagpieStatusLight(kind: health.kind, showPulse: isActive)
-                    .padding(.top, 3)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(profile.name)
-                            .font(.system(size: 15.5, weight: .bold))
-                            .foregroundColor(MagpieTheme.textPrimary)
-                        if isActive {
-                            MagpieBadge(text: "当前启用", color: MagpieTheme.amber)
-                        }
-                    }
-
-                    Text(profile.baseURL)
-                        .font(.system(size: 12.5, design: .monospaced))
-                        .foregroundColor(MagpieTheme.textSecondary)
-                        .lineLimit(1)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                MagpieStatusLight(kind: health.kind)
+                Text(profile.name)
+                    .font(.system(size: 15.5, weight: .semibold))
+                    .foregroundColor(MagpieTheme.ink)
+                if isActive {
+                    MagpieTag(text: "当前使用", tone: MagpieTheme.ink)
                 }
-
                 Spacer()
-
-                latencyPill(health: health)
+                if let ms = health.latencyMs {
+                    Text("\(ms) ms")
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundColor(MagpieTheme.textMuted)
+                }
             }
 
+            Text(profile.baseURL)
+                .font(.system(size: 12.5, design: .monospaced))
+                .foregroundColor(MagpieTheme.textSecondary)
+                .lineLimit(1)
+
             HStack(spacing: 6) {
-                MagpieBadge(text: profile.targetProtocol.shortBadge, color: MagpieTheme.teal)
-                MagpieBadge(text: profile.defaultModel, color: MagpieTheme.textSecondary, monospaced: true)
-                MagpieBadge(text: profile.maskedKeyPreview, color: MagpieTheme.textMuted, monospaced: true)
+                MagpieTag(text: profile.targetProtocol.displayName)
+                MagpieTag(text: profile.defaultModel, monospaced: true)
+                MagpieTag(text: profile.maskedKeyPreview, monospaced: true)
             }
 
             if health.kind == .failed {
-                Text("连接异常：\(health.message)")
-                    .font(.system(size: 12))
-                    .foregroundColor(MagpieTheme.coral)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else if health.kind == .connected {
                 Text(health.message)
                     .font(.system(size: 12))
-                    .foregroundColor(MagpieTheme.teal)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundColor(MagpieTheme.err)
             }
+
+            Rectangle()
+                .fill(MagpieTheme.hairline)
+                .frame(height: 1)
 
             HStack(spacing: 8) {
                 if !isActive {
@@ -170,7 +143,7 @@ struct ProfilesView: View {
                 Button(health.kind == .checking ? "测速中…" : "测速") {
                     Task { await store.probeConnection(for: profile) }
                 }
-                .buttonStyle(MagpieButtonStyle(tone: .teal, compact: true))
+                .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                 .disabled(health.kind == .checking)
 
                 Button("编辑") {
@@ -180,28 +153,21 @@ struct ProfilesView: View {
 
                 Spacer()
 
-                Button {
+                Button("删除") {
                     profilePendingDelete = profile
-                } label: {
-                    Image(systemName: "trash")
                 }
-                .buttonStyle(MagpieButtonStyle(tone: .danger, compact: true))
+                .font(.system(size: 12.5))
+                .foregroundColor(MagpieTheme.textMuted)
+                .buttonStyle(.plain)
             }
         }
-    }
-
-    @ViewBuilder
-    private func latencyPill(health: ConnectionHealth) -> some View {
-        switch health.kind {
-        case .connected:
-            MagpieBadge(text: "\(health.latencyMs ?? 0) ms", color: MagpieTheme.teal, monospaced: true)
-        case .checking:
-            MagpieBadge(text: "探测中", color: MagpieTheme.amber)
-        case .failed:
-            MagpieBadge(text: health.statusCode.map { "HTTP \($0)" } ?? "失败", color: MagpieTheme.coral, monospaced: true)
-        default:
-            MagpieBadge(text: "未探测", color: MagpieTheme.textMuted)
-        }
+        .padding(18)
+        .background(MagpieTheme.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(isActive ? MagpieTheme.ink : MagpieTheme.hairline, lineWidth: isActive ? 1.2 : 1)
+        )
     }
 }
 
@@ -226,18 +192,12 @@ struct ProfileEditorSheet: View {
     }
 
     private var urlErrorText: String? {
-        if rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return nil
-        }
-        return urlValidation.errorReason
+        rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : urlValidation.errorReason
     }
 
     private var urlHelperText: String? {
         guard case .valid(let normalized) = urlValidation else { return nil }
-        if normalized != rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines) {
-            return "保存时将自动规范化为：\(normalized)"
-        }
-        return "地址格式合法：\(normalized)"
+        return normalized
     }
 
     var body: some View {
@@ -245,23 +205,39 @@ struct ProfileEditorSheet: View {
             MagpieTheme.canvas.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                sheetHeader
+                HStack {
+                    Button("取消") { dismiss() }
+                        .font(.system(size: 14))
+                        .foregroundColor(MagpieTheme.textSecondary)
+                    Spacer()
+                    Text(existing == nil ? "新建配置" : "编辑配置")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(MagpieTheme.ink)
+                    Spacer()
+                    Button("保存") { commitSave() }
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(MagpieTheme.ink)
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+                .background(MagpieTheme.surface)
+                .overlay(Rectangle().fill(MagpieTheme.hairline).frame(height: 1), alignment: .bottom)
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 14) {
+                    VStack(alignment: .leading, spacing: 20) {
                         if existing == nil {
-                            quickTemplateStrip
+                            templateBar
                         }
 
-                        MagpieCard {
+                        MinimalSection {
                             MagpieInputField(
-                                label: "配置名称",
-                                placeholder: "例如：主力 Claude 中转 / 本地 Ollama",
+                                label: "名称",
+                                placeholder: "例如：主力 Claude / 本地节点",
                                 text: $name
                             )
 
                             MagpieInputField(
-                                label: "服务器地址（http / https）",
+                                label: "服务器地址",
                                 placeholder: "https://api.example.com",
                                 text: $rawBaseURL,
                                 monospaced: true,
@@ -271,7 +247,7 @@ struct ProfileEditorSheet: View {
                             )
 
                             MagpieInputField(
-                                label: "API Key / 访问密钥",
+                                label: "API Key",
                                 placeholder: "sk-...",
                                 text: $apiKey,
                                 isSecure: true,
@@ -281,58 +257,54 @@ struct ProfileEditorSheet: View {
                             protocolSelector
 
                             MagpieInputField(
-                                label: "默认模型 ID",
+                                label: "默认模型",
                                 placeholder: targetProtocol.suggestedDefaultModel,
                                 text: $defaultModel,
                                 monospaced: true
                             )
 
                             HStack {
-                                Text("保存后立即切换为当前启用配置")
+                                Text("保存后设为当前启用")
                                     .font(.system(size: 13))
-                                    .foregroundColor(MagpieTheme.textPrimary)
+                                    .foregroundColor(MagpieTheme.ink)
                                 Spacer()
-                                MagpieToggle(isOn: $activateOnSave, accent: MagpieTheme.amber)
+                                MagpieToggle(isOn: $activateOnSave)
                             }
-                            .padding(.top, 4)
                         }
 
                         if let probeResult = probeResult {
-                            probeFeedbackCard(probeResult)
+                            MinimalSection {
+                                HStack(spacing: 8) {
+                                    MagpieStatusLight(kind: probeResult.kind)
+                                    Text(probeResult.message)
+                                        .font(.system(size: 12.5))
+                                        .foregroundColor(probeResult.kind == .connected ? MagpieTheme.ok : MagpieTheme.err)
+                                }
+                            }
                         }
 
                         if let saveError = saveError {
-                            MagpieErrorBanner(title: "无法保存配置", message: saveError)
+                            MagpieErrorBanner(title: "无法保存", message: saveError)
                         }
 
                         HStack(spacing: 10) {
-                            Button {
+                            Button(isProbing ? "测试中…" : "测试连接") {
                                 runProbe()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: isProbing ? "arrow.triangle.2.circlepath" : "antenna.radiowaves.left.and.right")
-                                    Text(isProbing ? "探测中…" : "测试连接")
-                                }
-                                .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(MagpieButtonStyle(tone: .teal))
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary))
                             .disabled(isProbing)
 
-                            Button {
+                            Button("保存配置") {
                                 commitSave()
-                            } label: {
-                                Text(existing == nil ? "保存配置" : "更新配置")
-                                    .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(MagpieButtonStyle(tone: .primary))
                         }
                     }
-                    .padding(16)
-                    .padding(.bottom, 30)
+                    .padding(22)
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .onAppear {
             if let existing = existing {
                 name = existing.name
@@ -347,83 +319,33 @@ struct ProfileEditorSheet: View {
         }
     }
 
-    private var sheetHeader: some View {
-        HStack {
-            Button("取消") {
-                dismiss()
-            }
-            .font(.system(size: 15, weight: .medium))
-            .foregroundColor(MagpieTheme.textSecondary)
-
-            Spacer()
-
-            Text(existing == nil ? "新建反代配置" : "编辑配置")
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(MagpieTheme.textPrimary)
-
-            Spacer()
-
-            Button("保存") {
-                commitSave()
-            }
-            .font(.system(size: 15, weight: .bold))
-            .foregroundColor(MagpieTheme.amber)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(MagpieTheme.card)
-        .overlay(
-            Rectangle()
-                .fill(MagpieTheme.border)
-                .frame(height: 1),
-            alignment: .bottom
-        )
-    }
-
-    private var quickTemplateStrip: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("快速填充模板")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(MagpieTheme.textSecondary)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    templateChip("OpenAI 官方", url: "https://api.openai.com", proto: .openAIChat, model: "gpt-4o")
-                    templateChip("Anthropic", url: "https://api.anthropic.com", proto: .anthropicMessages, model: "claude-sonnet-4-5")
-                    templateChip("Gemini 官方", url: "https://generativelanguage.googleapis.com", proto: .geminiV1Beta, model: "gemini-2.5-pro")
-                    templateChip("本地 OneAPI", url: "http://127.0.0.1:3000", proto: .openAIChat, model: "claude-sonnet-4-5")
-                }
+    private var templateBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                templateChip("OpenAI", url: "https://api.openai.com", proto: .openAIChat, model: "gpt-4o")
+                templateChip("Anthropic", url: "https://api.anthropic.com", proto: .anthropicMessages, model: "claude-sonnet-4-5")
+                templateChip("Gemini", url: "https://generativelanguage.googleapis.com", proto: .geminiV1Beta, model: "gemini-2.5-pro")
+                templateChip("本地节点", url: "http://127.0.0.1:3000", proto: .openAIChat, model: "claude-sonnet-4-5")
             }
         }
     }
 
     private func templateChip(_ title: String, url: String, proto: MagpieProtocol, model: String) -> some View {
-        Button {
+        Button(title) {
             name = title
             rawBaseURL = url
             targetProtocol = proto
             defaultModel = model
             saveError = nil
             probeResult = nil
-        } label: {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(MagpieTheme.textPrimary)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 7)
-                .background(MagpieTheme.cardElevated)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .stroke(MagpieTheme.borderStrong, lineWidth: 1)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
     }
 
     private var protocolSelector: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("上游目标协议")
-                .font(.system(size: 12.5, weight: .semibold))
+        VStack(alignment: .leading, spacing: 6) {
+            Text("上游协议")
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(MagpieTheme.textSecondary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
@@ -437,22 +359,17 @@ struct ProfileEditorSheet: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(proto.displayName)
-                                .font(.system(size: 12.5, weight: .bold))
-                                .foregroundColor(selected ? MagpieTheme.canvas : MagpieTheme.textPrimary)
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
                             Text(proto.routePath)
                                 .font(.system(size: 10.5, design: .monospaced))
-                                .foregroundColor(selected ? MagpieTheme.canvas.opacity(0.75) : MagpieTheme.textMuted)
+                                .foregroundColor(selected ? MagpieTheme.surface.opacity(0.75) : MagpieTheme.textMuted)
                                 .lineLimit(1)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 9)
-                        .background(selected ? MagpieTheme.amber : MagpieTheme.input)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(selected ? MagpieTheme.amber : MagpieTheme.border, lineWidth: 1)
-                        )
+                        .padding(10)
+                        .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -460,39 +377,15 @@ struct ProfileEditorSheet: View {
         }
     }
 
-    private func probeFeedbackCard(_ health: ConnectionHealth) -> some View {
-        let isOK = health.kind == .connected
-        return MagpieCard(
-            elevated: true,
-            borderColor: isOK ? MagpieTheme.teal.opacity(0.55) : MagpieTheme.coral.opacity(0.6)
-        ) {
-            HStack(spacing: 8) {
-                MagpieStatusLight(kind: health.kind)
-                Text(isOK ? "连接探测成功" : "连接探测失败")
-                    .font(.system(size: 13.5, weight: .bold))
-                    .foregroundColor(MagpieTheme.textPrimary)
-                Spacer()
-                if let ms = health.latencyMs {
-                    MagpieBadge(text: "\(ms) ms", color: isOK ? MagpieTheme.teal : MagpieTheme.coral, monospaced: true)
-                }
-            }
-            Text(health.message)
-                .font(.system(size: 12.5))
-                .foregroundColor(isOK ? MagpieTheme.teal : MagpieTheme.coral)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     private func runProbe() {
         saveError = nil
         isProbing = true
         Task {
-            let res = await GatewayStore.executeProbe(
+            probeResult = await UpstreamClient.probe(
                 rawBaseURL: rawBaseURL,
                 apiKey: apiKey,
                 targetProtocol: targetProtocol
             )
-            probeResult = res
             isProbing = false
         }
     }
@@ -515,7 +408,7 @@ struct ProfileEditorSheet: View {
             } else if activateOnSave {
                 Task { await store.probeConnection(for: saved) }
             }
-            store.showToast(existing == nil ? "已保存配置「\(saved.name)」" : "已更新配置「\(saved.name)」")
+            store.showToast("已保存「\(saved.name)」")
             dismiss()
         case .failure(let err):
             saveError = err.text
