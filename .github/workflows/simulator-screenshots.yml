@@ -1,0 +1,198 @@
+name: Capture Magpie Simulator Screenshots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: xcode-27
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Inspect Xcode & Simulator availability
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available
+
+      - name: Boot iPhone Simulator
+        run: |
+          SIM_UDID=$(python3 -c '
+          import json, subprocess, sys
+          data = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"]))
+          candidates = []
+          for runtime, devs in data.get("devices", {}).items():
+              if "iOS" not in runtime:
+                  continue
+              for d in devs:
+                  if d.get("isAvailable") and "iPhone" in d.get("name", ""):
+                      candidates.append((runtime, d["name"], d["udid"]))
+          if not candidates:
+              sys.exit("No available iPhone simulator found")
+          candidates.sort(key=lambda x: (x[0], "Pro" in x[1], x[1]), reverse=True)
+          print(f"Selected: {candidates[0]}", file=sys.stderr)
+          print(candidates[0][2])
+          ')
+          echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM_UDID" || true
+          xcrun simctl bootstatus "$SIM_UDID" -b
+
+      - name: Generate temporary UITest target and XcodeGen project
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          mkdir -p MagpieUITests
+          cat << 'EOF' > MagpieUITests/MagpieScreenshotTests.swift
+          import XCTest
+
+          final class MagpieScreenshotTests: XCTestCase {
+              private func saveShot(_ name: String) {
+                  let shot = XCUIScreen.main.screenshot()
+                  let att = XCTAttachment(screenshot: shot)
+                  att.name = name
+                  att.lifetime = .keepAlways
+                  add(att)
+              }
+
+              private func tapButton(matching suffix: String, in app: XCUIApplication, timeout: TimeInterval = 6) {
+                  let pred = NSPredicate(format: "label ENDSWITH %@", suffix)
+                  let btn = app.buttons.matching(pred).firstMatch
+                  if btn.waitForExistence(timeout: timeout) {
+                      btn.tap()
+                  } else {
+                      let containsPred = NSPredicate(format: "label CONTAINS %@", suffix)
+                      let fallback = app.buttons.matching(containsPred).firstMatch
+                      XCTAssertTrue(fallback.waitForExistence(timeout: timeout), "Button '\(suffix)' not found")
+                      fallback.tap()
+                  }
+              }
+
+              func testCaptureAllTabs() {
+                  let app = XCUIApplication()
+                  app.launch()
+                  sleep(2)
+                  saveShot("01-dashboard")
+
+                  // Run live smoke test on local 127.0.0.1:3425 gateway
+                  tapButton(matching: "发起自检", in: app)
+                  sleep(2)
+                  let scroll = app.scrollViews.firstMatch
+                  if scroll.exists {
+                      scroll.swipeUp()
+                      sleep(1)
+                  }
+                  saveShot("02-dashboard-smoke")
+
+                  // Switch to Models tab (local built-in models)
+                  tapButton(matching: "模型", in: app)
+                  sleep(2)
+                  saveShot("03-models")
+
+                  // Switch to Logs & Privacy tab
+                  tapButton(matching: "日志", in: app)
+                  sleep(1)
+                  saveShot("04-logs-privacy")
+
+                  // Switch to Profiles tab, open New Profile sheet, pick template, save
+                  tapButton(matching: "配置", in: app)
+                  sleep(1)
+                  tapButton(matching: "新建", in: app)
+                  sleep(1)
+                  tapButton(matching: "Anthropic", in: app)
+                  sleep(1)
+                  saveShot("05-new-profile-sheet")
+
+                  tapButton(matching: "保存", in: app)
+                  sleep(1)
+                  saveShot("06-profiles-saved")
+              }
+          }
+          EOF
+
+          python3 -c '
+          with open("project.yml", "r") as f:
+              txt = f.read()
+          # Replace target-level schemes block with valid target scheme + top-level scheme
+          idx = txt.find("    schemes:")
+          if idx != -1:
+              txt = txt[:idx]
+          addition = """    scheme:
+                testTargets:
+                  - MagpieUITests
+
+            MagpieUITests:
+              type: bundle.ui-testing
+              platform: iOS
+              deploymentTarget: "15.0"
+              sources:
+                - path: MagpieUITests
+              dependencies:
+                - target: Magpie
+              settings:
+                base:
+                  PRODUCT_BUNDLE_IDENTIFIER: ai.usemagpie.ios.uitests
+                  CODE_SIGNING_ALLOWED: "NO"
+                  CODE_SIGNING_REQUIRED: "NO"
+                  GENERATE_INFOPLIST_FILE: "YES"
+          """
+          # Fix indent: 4 spaces for scheme under Magpie, 2 spaces for MagpieUITests under targets
+          lines = [
+              "    scheme:",
+              "      testTargets:",
+              "        - MagpieUITests",
+              "",
+              "  MagpieUITests:",
+              "    type: bundle.ui-testing",
+              "    platform: iOS",
+              "    deploymentTarget: \"15.0\"",
+              "    sources:",
+              "      - path: MagpieUITests",
+              "    dependencies:",
+              "      - target: Magpie",
+              "    settings:",
+              "      base:",
+              "        PRODUCT_BUNDLE_IDENTIFIER: ai.usemagpie.ios.uitests",
+              "        CODE_SIGNING_ALLOWED: \"NO\"",
+              "        CODE_SIGNING_REQUIRED: \"NO\"",
+              "        GENERATE_INFOPLIST_FILE: \"YES\"",
+          ]
+          with open("project.yml", "w") as f:
+              f.write(txt.rstrip() + "\n" + "\n".join(lines) + "\n")
+          '
+          cat project.yml
+          xcodegen generate --spec project.yml
+          xcodebuild -list -project Magpie.xcodeproj
+
+      - name: Run UI tests in iOS Simulator to capture screenshots
+        run: |
+          set -o pipefail
+          rm -rf build/TestResults.xcresult
+          mkdir -p build/screenshots
+          xcodebuild test \
+            -project Magpie.xcodeproj \
+            -scheme Magpie \
+            -destination "platform=iOS Simulator,id=${SIM_UDID}" \
+            -only-testing:MagpieUITests/MagpieScreenshotTests/testCaptureAllTabs \
+            -resultBundlePath build/TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO | tee build/xcodebuild-test.log
+
+      - name: Extract PNG screenshots from xcresult
+        if: always()
+        run: |
+          mkdir -p build/screenshots
+          if [ -d build/TestResults.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/TestResults.xcresult --output-path build/screenshots || true
+            ls -la build/screenshots || true
+          fi
+
+      - name: Upload screenshots artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: magpie-simulator-screenshots
+          path: |
+            build/screenshots
+            build/xcodebuild-test.log
+          retention-days: 7
