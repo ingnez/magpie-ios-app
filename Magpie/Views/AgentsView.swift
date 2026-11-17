@@ -177,7 +177,7 @@ private struct AgentModelsView: View {
     var body: some View {
         NavigationView {
             Form {
-                if let error = error { Text(error).foregroundColor(.red) }
+                if let error = error { Text(error).foregroundColor(StatusPalette.err) }
                 if loading { ProgressView() }
                 if let response = response {
                     Toggle("仅显示指定模型", isOn: $only)

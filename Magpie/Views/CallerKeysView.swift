@@ -99,7 +99,7 @@ private struct CallerKeyEditor: View {
     var body: some View {
         NavigationView {
             Form {
-                if let error = error { Text(error).foregroundColor(.red) }
+                if let error = error { Text(error).foregroundColor(StatusPalette.err) }
                 Section(header: Text("基本信息")) {
                     TextField("名称", text: $name)
                     Toggle("仅允许读取统计", isOn: $readOnly)

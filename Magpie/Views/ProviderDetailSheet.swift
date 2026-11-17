@@ -3,6 +3,9 @@ import SwiftUI
 struct ProviderDetailSheet: View {
     @ObservedObject var store: GatewayStore
     let providerID: String
+    var initialTab: DetailTab = .overview
+    var highlightedAccountUser: String? = nil
+    var highlightedKeyID: String? = nil
     @Environment(\.dismiss) private var dismiss
 
     enum DetailTab: String, CaseIterable {
@@ -13,6 +16,7 @@ struct ProviderDetailSheet: View {
     }
 
     @State private var activeTab: DetailTab = .overview
+    @State private var didApplyInitialTab = false
     @State private var isTesting = false
     @State private var isRefreshingModels = false
     @State private var isCheckingBalance = false
@@ -129,25 +133,50 @@ struct ProviderDetailSheet: View {
                 VStack(spacing: 0) {
                     sheetHeader(p)
                     subTabBar(p)
-                    ScrollView(showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 18) {
-                            switch activeTab {
-                            case .overview:
-                                overviewSection(p)
-                            case .keys:
-                                keysSection(p)
-                            case .models:
-                                modelsSection(p)
-                            case .advanced:
-                                advancedSection(p)
+                    ScrollViewReader { scrollProxy in
+                        ScrollView(showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: Spacing.cardPadding) {
+                                switch activeTab {
+                                case .overview:
+                                    overviewSection(p)
+                                case .keys:
+                                    keysSection(p)
+                                case .models:
+                                    modelsSection(p)
+                                case .advanced:
+                                    advancedSection(p)
+                                }
+                            }
+                            .padding(Spacing.sheetPadding)
+                            .padding(.bottom, 40)
+                        }
+                        .accessibilityIdentifier("providerDetailScrollView")
+                        .onAppear {
+                            if !didApplyInitialTab {
+                                activeTab = initialTab
+                                didApplyInitialTab = true
+                            }
+                            if let user = highlightedAccountUser, !user.isEmpty {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        scrollProxy.scrollTo("accountRow_\(user.lowercased())", anchor: .center)
+                                    }
+                                }
+                            } else if let kid = highlightedKeyID, !kid.isEmpty {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        scrollProxy.scrollTo("keyRow_\(kid)", anchor: .center)
+                                    }
+                                }
                             }
                         }
-                        .padding(20)
-                        .padding(.bottom, 40)
                     }
-                    .accessibilityIdentifier("providerDetailScrollView")
                 }
                 .onAppear {
+                    if !didApplyInitialTab {
+                        activeTab = initialTab
+                        didApplyInitialTab = true
+                    }
                     syncDrafts(from: p)
                 }
                 .onChange(of: p.id) { _ in
@@ -166,7 +195,6 @@ struct ProviderDetailSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
         .sheet(item: $editingKeyTarget) { keyItem in
             keyEditorSheet(keyItem)
         }
@@ -250,7 +278,7 @@ struct ProviderDetailSheet: View {
                         activeTab = tab
                     }
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.textSecondary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 6)
                     .background(selected ? MagpieTheme.ink : MagpieTheme.surface)
@@ -381,7 +409,7 @@ struct ProviderDetailSheet: View {
                                     Task { await store.updateProviderAffinity(p, affinity: opt.id) }
                                 }
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 6)
                                 .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -481,7 +509,7 @@ struct ProviderDetailSheet: View {
     private func keysSection(_ p: RemoteProvider) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             if let acc = p.account {
-                SubscriptionAccountsSection(store: store, provider: p, account: acc) { mode, user, proxy in
+                SubscriptionAccountsSection(store: store, provider: p, account: acc, highlightedUser: highlightedAccountUser) { mode, user, proxy in
                     let agent = acc.agent ?? p.id
                     let platform = SubscriptionCatalog.resolve(
                         agent: agent,
@@ -591,6 +619,10 @@ struct ProviderDetailSheet: View {
                                 Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
                             }
                             keyRow(p, keyInfo: k)
+                                .id("keyRow_\(k.id)")
+                                .padding(highlightedKeyID == k.id ? Spacing.xs : 0)
+                                .background(highlightedKeyID == k.id ? StatusPalette.warnSurface : Color.clear)
+                                .clipShape(RoundedRectangle(cornerRadius: Corners.sm, style: .continuous))
                         }
                     }
                 }
@@ -916,7 +948,7 @@ struct ProviderDetailSheet: View {
                             let selected = billingDraft == item.0
                             Button(item.1) { billingDraft = item.0 }
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 6)
                                 .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -936,7 +968,7 @@ struct ProviderDetailSheet: View {
                                 let selected = authHeaderDraft == item.0
                                 Button(item.1) { authHeaderDraft = item.0 }
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                     .padding(.horizontal, 11)
                                     .padding(.vertical, 6)
                                     .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -1023,7 +1055,6 @@ struct ProviderDetailSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 
     private func keyModelsSheet(_ keyItem: RemoteKeyInfo) -> some View {
@@ -1099,7 +1130,6 @@ struct ProviderDetailSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 
     private func modelEditorSheet(_ model: RemoteProviderModel) -> some View {
@@ -1154,7 +1184,7 @@ struct ProviderDetailSheet: View {
                                             if on { modelEffortsDraft.remove(lvl) } else { modelEffortsDraft.insert(lvl) }
                                         }
                                         .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                        .foregroundColor(on ? MagpieTheme.surface : MagpieTheme.ink)
+                                        .foregroundColor(on ? MagpieTheme.onInk : MagpieTheme.ink)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
                                         .background(on ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -1173,7 +1203,7 @@ struct ProviderDetailSheet: View {
                                         let selected = modelImagesDraft == item.0
                                         Button(item.1) { modelImagesDraft = item.0 }
                                             .font(.system(size: 12, weight: .medium))
-                                            .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                            .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 6)
                                             .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -1188,7 +1218,6 @@ struct ProviderDetailSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 
     // MARK: - Helpers & Persistence
@@ -1347,7 +1376,7 @@ struct ProviderDetailSheet: View {
                         let active = selected.wrappedValue == opt.id
                         Button(opt.title) { selected.wrappedValue = opt.id }
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(active ? MagpieTheme.surface : MagpieTheme.ink)
+                            .foregroundColor(active ? MagpieTheme.onInk : MagpieTheme.ink)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(active ? MagpieTheme.ink : MagpieTheme.canvas)

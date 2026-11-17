@@ -4,6 +4,7 @@ struct SubscriptionAccountsSection: View {
     @ObservedObject var store: GatewayStore
     let provider: RemoteProvider
     let account: RemoteProviderAccount
+    var highlightedUser: String? = nil
     var onOpenSignIn: (SubscriptionSignInSheet.InitialMode, String?, String?) -> Void
 
     @State private var isLoadingUsage = false
@@ -62,7 +63,7 @@ struct SubscriptionAccountsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: Spacing.cardPadding) {
             if agent == "codex" {
                 codexStaleNotices
             }
@@ -71,7 +72,7 @@ struct SubscriptionAccountsSection: View {
                 title: "订阅账号池 (\(logins.count))",
                 trailingText: isPriorityMode ? "按顺位优先 · 不限账号数" : "N 账号通用轮询"
             ) {
-                HStack(spacing: 8) {
+                HStack(spacing: Spacing.sm) {
                     Button("+ OAuth 添加") {
                         onOpenSignIn(.auto, nil, provider.proxy)
                     }
@@ -108,13 +109,13 @@ struct SubscriptionAccountsSection: View {
                 }
 
                 // Capacity & maxAccounts configuration bar
-                HStack(spacing: 8) {
+                HStack(spacing: Spacing.sm) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("可用 \(usableLogins.count)/\(logins.count) · 同时调度：\(provider.maxAccountsSummary)")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(Typography.sectionHeader)
                             .foregroundColor(MagpieTheme.ink)
                         Text("号池支持无限新增账号；上限留空 (null) 或 0 表示不限")
-                            .font(.system(size: 11))
+                            .font(Typography.micro)
                             .foregroundColor(MagpieTheme.textMuted)
                     }
                     Spacer()
@@ -126,40 +127,40 @@ struct SubscriptionAccountsSection: View {
                     .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                     .accessibilityIdentifier("configureMaxAccountsButton")
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, Spacing.md - 2)
+                .padding(.vertical, Spacing.sm)
                 .background(MagpieTheme.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
 
                 if let cap = provider.effectiveMaxAccounts, cap > 0, usableLogins.count > cap {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12.5))
-                            .foregroundColor(MagpieTheme.warn)
+                            .font(Typography.bodySmall)
+                            .foregroundColor(StatusPalette.warn)
                             .padding(.top, 1)
                         Text("已超出同时启用上限（\(cap) 个）：当前 \(usableLogins.count) 个可用账号中仅前 \(cap) 个同时参与调度，其余 \(usableLogins.count - cap) 个自动作为候补顺延，在主用号冷却或耗尽时顶替。")
-                            .font(.system(size: 11.5))
-                            .foregroundColor(MagpieTheme.warn)
+                            .font(Typography.caption)
+                            .foregroundColor(StatusPalette.warn)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(9)
+                    .padding(Spacing.sm + 1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(MagpieTheme.warn.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(StatusPalette.warnSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
                 } else if let cap = provider.effectiveMaxAccounts, cap > 0, logins.count >= cap {
                     Text("号池账号数已达同时调度上限 \(cap) 个；仍可继续新增账号作为候补，或点击「上限设置」设为不限 (null)。")
-                        .font(.system(size: 11.5))
+                        .font(Typography.caption)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if logins.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: Spacing.xs) {
                         Text(account.user.map { "当前登录：\($0)" } ?? "暂无多账号记录")
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .font(Typography.bodyMono)
                             .foregroundColor(MagpieTheme.ink)
                         Text("点击上方「+ OAuth 添加」可接入更多 \(platform.name) 账号进行多号轮换与并发分流。")
-                            .font(.system(size: 12))
+                            .font(Typography.sectionHeader)
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else {
@@ -168,6 +169,7 @@ struct SubscriptionAccountsSection: View {
                             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
                         }
                         accountRow(idx: idx, login: login)
+                            .id("accountRow_\(login.user.lowercased())")
                     }
                 }
             }
@@ -177,12 +179,12 @@ struct SubscriptionAccountsSection: View {
                 trailingText: provider.routing.isEmpty ? "smart" : provider.routing
             ) {
                 Text(SubscriptionCatalog.routingCategorySummary(provider.routing))
-                    .font(.system(size: 12))
+                    .font(Typography.sectionHeader)
                     .foregroundColor(MagpieTheme.textSecondary)
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
                     Text("优先级模式（顺位为主）")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Typography.microSemibold)
                         .foregroundColor(MagpieTheme.textMuted)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
                         routingQuickChip(id: "", title: "Smart 智能优先级")
@@ -190,7 +192,7 @@ struct SubscriptionAccountsSection: View {
                         routingQuickChip(id: "drain", title: "Drain 用尽顺延")
                     }
                     Text("轮询与均衡模式（多号分流）")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Typography.microSemibold)
                         .foregroundColor(MagpieTheme.textMuted)
                         .padding(.top, 2)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 105), spacing: 7)], alignment: .leading, spacing: 7) {
@@ -252,9 +254,9 @@ struct SubscriptionAccountsSection: View {
         if let stale = store.codexDaemonStale, !stale.isEmpty {
             MinimalSection(title: "Codex 后台服务需重启", trailingText: stale) {
                 Text("Codex 后台 app-server 仍停留在旧账号 \(stale)，重启后才会切换到新账号。")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(MagpieTheme.warn)
-                HStack(spacing: 8) {
+                    .font(Typography.bodySmall)
+                    .foregroundColor(StatusPalette.warn)
+                HStack(spacing: Spacing.sm) {
                     Button("重启后台服务") {
                         Task { _ = await store.codexDaemonAction("restart", toast: "已重启 Codex 后台服务") }
                     }
@@ -269,9 +271,9 @@ struct SubscriptionAccountsSection: View {
         if let appStale = store.codexAppStale, !appStale.isEmpty {
             MinimalSection(title: "Codex 桌面应用提醒", trailingText: appStale) {
                 Text("Codex App 仍停留在旧账号 \(appStale)，重启其 app-server 后生效。")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(MagpieTheme.warn)
-                HStack(spacing: 8) {
+                    .font(Typography.bodySmall)
+                    .foregroundColor(StatusPalette.warn)
+                HStack(spacing: Spacing.sm) {
                     Button("重启 Codex App 服务") {
                         Task { _ = await store.codexDaemonAction("restart-app", toast: "已重启 Codex App 服务") }
                     }
@@ -310,40 +312,41 @@ struct SubscriptionAccountsSection: View {
         let isCurrentlyOn = !login.paused && (login.on || login.active)
         let soleFixedPrimary = login.active && !login.paused && usableLogins.count <= 1 && agent != "codex" && agent != "claude"
         let dotColor: Color = {
-            if login.lapsed != nil { return MagpieTheme.err }
-            if isCoolingWhole || isReserve { return MagpieTheme.warn }
-            return isUsable ? MagpieTheme.ok : MagpieTheme.textMuted
+            if login.lapsed != nil { return StatusPalette.err }
+            if isCoolingWhole || isReserve { return StatusPalette.warn }
+            return isUsable ? StatusPalette.ok : StatusPalette.neutral
         }()
+        let isHighlighted = highlightedUser.map { $0.caseInsensitiveCompare(login.user) == .orderedSame } ?? false
 
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: Spacing.xs) {
+            HStack(spacing: Spacing.sm) {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 8, height: 8)
 
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: Spacing.xs - 1) {
                         Text(displayTitle)
-                            .font(.system(size: 13.5, weight: .semibold, design: (alias?.isEmpty == false) ? .default : .monospaced))
+                            .font((alias?.isEmpty == false) ? Typography.rowTitle : Typography.rowTitleMono)
                             .foregroundColor(MagpieTheme.ink)
                             .lineLimit(1)
                             .accessibilityIdentifier("accountTitle_\(login.user)")
                         if login.lapsed != nil {
-                            MagpieTag(text: "登录失效", tone: MagpieTheme.err)
+                            MagpieTag(text: "登录失效", tone: StatusPalette.err)
                         } else if login.paused {
-                            MagpieTag(text: "已暂停", tone: MagpieTheme.warn)
+                            MagpieTag(text: "已暂停", tone: StatusPalette.warn)
                         } else if !login.on && !login.active {
                             MagpieTag(text: "已停用")
                         } else if isCoolingWhole {
-                            MagpieTag(text: "冷却跳过", tone: MagpieTheme.warn)
+                            MagpieTag(text: "冷却跳过", tone: StatusPalette.warn)
                         } else if isReserve {
-                            MagpieTag(text: "候补顺延", tone: MagpieTheme.warn)
+                            MagpieTag(text: "候补顺延", tone: StatusPalette.warn)
                         } else if isPriorityMode {
-                            MagpieTag(text: idx == 0 ? "优先级 #1" : "顺位 #\(idx + 1)", tone: idx == 0 ? MagpieTheme.ink : MagpieTheme.ok)
+                            MagpieTag(text: idx == 0 ? "优先级 #1" : "顺位 #\(idx + 1)", tone: idx == 0 ? MagpieTheme.ink : StatusPalette.ok)
                         } else if provider.routing.lowercased() == "weight" {
-                            MagpieTag(text: "权重 \(thisWeight) · \(weightSharePct)%", tone: MagpieTheme.ok)
+                            MagpieTag(text: "权重 \(thisWeight) · \(weightSharePct)%", tone: StatusPalette.ok)
                         } else {
-                            MagpieTag(text: "参与轮询", tone: MagpieTheme.ok)
+                            MagpieTag(text: "参与轮询", tone: StatusPalette.ok)
                         }
                         if login.active && !isPriorityMode && !isReserve {
                             MagpieTag(text: "主用", tone: MagpieTheme.ink)
@@ -352,7 +355,7 @@ struct SubscriptionAccountsSection: View {
 
                     if displayTitle != login.user {
                         Text(login.user)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(Typography.microMono)
                             .foregroundColor(MagpieTheme.textMuted)
                             .lineLimit(1)
                     }
@@ -365,12 +368,12 @@ struct SubscriptionAccountsSection: View {
                         Button("↑") {
                             Task { _ = await store.moveAccountOrder(provider: provider, user: login.user, offset: -1, logins: logins) }
                         }
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(Typography.captionMono)
                         .disabled(idx == 0)
                         Button("↓") {
                             Task { _ = await store.moveAccountOrder(provider: provider, user: login.user, offset: 1, logins: logins) }
                         }
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(Typography.captionMono)
                         .disabled(idx >= logins.count - 1)
                     }
                 }
@@ -402,7 +405,7 @@ struct SubscriptionAccountsSection: View {
             let hasMeta = (login.plan?.isEmpty == false) || login.token || login.accessOnly || (cap ?? 0) > 0 || thisWeight > 1 || (conc ?? 0) > 0 || (ownProxy?.isEmpty == false) || !allowedModels.isEmpty
             if hasMeta {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: Spacing.xs - 1) {
                         if let plan = login.plan, !plan.isEmpty {
                             MagpieTag(text: plan, tone: MagpieTheme.ink)
                         }
@@ -410,7 +413,7 @@ struct SubscriptionAccountsSection: View {
                             MagpieTag(text: login.uses ? "Token 使用中" : "Setup-Token")
                         }
                         if login.accessOnly {
-                            MagpieTag(text: "仅 AccessToken", tone: MagpieTheme.warn)
+                            MagpieTag(text: "仅 AccessToken", tone: StatusPalette.warn)
                         }
                         if let c = cap, c > 0, c < 100 {
                             MagpieTag(text: "上限 \(c)%")
@@ -434,13 +437,13 @@ struct SubscriptionAccountsSection: View {
             // Quota windows
             if let lapsed = login.lapsed, !lapsed.isEmpty {
                 Text("授权已失效：\(lapsed)")
-                    .font(.system(size: 11.5))
-                    .foregroundColor(MagpieTheme.err)
+                    .font(Typography.caption)
+                    .foregroundColor(StatusPalette.err)
             } else if let q = quota {
                 if let err = q.error, !err.isEmpty {
                     Text("额度查询提示：\(err)")
-                        .font(.system(size: 11))
-                        .foregroundColor(MagpieTheme.warn)
+                        .font(Typography.micro)
+                        .foregroundColor(StatusPalette.warn)
                 }
                 if !q.windows.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -448,12 +451,12 @@ struct SubscriptionAccountsSection: View {
                             quotaWindowRow(w)
                         }
                     }
-                    .padding(7)
+                    .padding(Corners.sm)
                     .background(MagpieTheme.canvas)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Corners.sm, style: .continuous))
                 } else if let bal = q.balance, !bal.isEmpty {
                     Text("余额：\(bal)")
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(Typography.captionMono)
                         .foregroundColor(MagpieTheme.textSecondary)
                 }
             }
@@ -461,14 +464,14 @@ struct SubscriptionAccountsSection: View {
             // Rests (generic across all N accounts)
             ForEach(Array(rests.enumerated()), id: \.offset) { _, rest in
                 let scope = (rest.model?.isEmpty == false) ? "模型 \(rest.model!) 冷却" : "整号冷却"
-                HStack(spacing: 8) {
+                HStack(spacing: Spacing.sm) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(scope)：\(rest.why ?? "限流/异常")")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundColor(MagpieTheme.warn)
+                            .font(Typography.captionMedium)
+                            .foregroundColor(StatusPalette.warn)
                         if let until = rest.until, !until.isEmpty {
                             Text("预计恢复：\(until)")
-                                .font(.system(size: 10.5, design: .monospaced))
+                                .font(Typography.nanoMono)
                                 .foregroundColor(MagpieTheme.textMuted)
                         }
                     }
@@ -480,13 +483,13 @@ struct SubscriptionAccountsSection: View {
                         .buttonStyle(MagpieButtonStyle(tone: .secondary, compact: true))
                     }
                 }
-                .padding(7)
+                .padding(Corners.sm)
                 .background(MagpieTheme.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: Corners.sm, style: .continuous))
             }
 
             // Actions (compact layout so buttons never clip or crowd on N-account lists)
-            HStack(spacing: 6) {
+            HStack(spacing: Spacing.xs) {
                 if login.lapsed == nil && !login.token {
                     let btnLabel = login.paused ? "恢复" : (isCurrentlyOn ? (login.active ? "暂停" : "停用") : "启用")
                     compactRowButton(btnLabel, tone: .subtle) {
@@ -523,7 +526,7 @@ struct SubscriptionAccountsSection: View {
             }
 
             if (idx > 0 && login.lapsed == nil && isPriorityMode) || (login.token && !login.uses) {
-                HStack(spacing: 6) {
+                HStack(spacing: Spacing.xs) {
                     if idx > 0 && login.lapsed == nil && isPriorityMode {
                         compactRowButton("设为首选", tone: .secondary) {
                             Task { _ = await store.makeAccountFirst(provider: provider, user: login.user, logins: logins) }
@@ -539,6 +542,13 @@ struct SubscriptionAccountsSection: View {
                 }
             }
         }
+        .padding(isHighlighted ? Spacing.sm : 0)
+        .background(isHighlighted ? StatusPalette.warnSurface : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: Corners.md, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Corners.md, style: .continuous)
+                .stroke(isHighlighted ? StatusPalette.warn.opacity(0.55) : Color.clear, lineWidth: isHighlighted ? 1.5 : 0)
+        )
     }
 
     private func compactRowButton(_ title: String, tone: MagpieButtonTone, action: @escaping () -> Void) -> some View {
@@ -548,7 +558,7 @@ struct SubscriptionAccountsSection: View {
         switch tone {
         case .primary:
             bg = MagpieTheme.ink
-            fg = MagpieTheme.surface
+            fg = MagpieTheme.onInk
             border = MagpieTheme.ink
         case .secondary:
             bg = MagpieTheme.surface
@@ -559,18 +569,18 @@ struct SubscriptionAccountsSection: View {
             fg = MagpieTheme.ink
             border = Color.clear
         case .danger:
-            bg = MagpieTheme.surface
-            fg = MagpieTheme.err
-            border = MagpieTheme.err.opacity(0.3)
+            bg = StatusPalette.errSurface
+            fg = StatusPalette.err
+            border = StatusPalette.err.opacity(0.35)
         }
         return Button(title, action: action)
-            .font(.system(size: 11.5, weight: .medium))
+            .font(Typography.captionMedium)
             .foregroundColor(fg)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, Spacing.sm)
             .padding(.vertical, 5)
             .background(bg)
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(border, lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: Corners.sm, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Corners.sm, style: .continuous).stroke(border, lineWidth: 1))
             .buttonStyle(.plain)
             .fixedSize(horizontal: true, vertical: false)
     }
@@ -580,22 +590,22 @@ struct SubscriptionAccountsSection: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(w.name)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(Typography.microMedium)
                     .foregroundColor(MagpieTheme.ink)
                 Spacer()
                 if let display = w.display, !display.isEmpty {
                     Text(display)
-                        .font(.system(size: 10.5, design: .monospaced))
+                        .font(Typography.nanoMono)
                         .foregroundColor(MagpieTheme.textSecondary)
                 } else if w.unlimited {
                     Text("不限量")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(MagpieTheme.ok)
+                        .font(Typography.nano)
+                        .foregroundColor(StatusPalette.ok)
                 } else {
                     let resetHint = formatResetSecs(w.resetSecs)
                     Text(resetHint.isEmpty ? String(format: "已用 %.0f%%", clamped) : String(format: "已用 %.0f%% · %@", clamped, resetHint))
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundColor(clamped >= 90 ? MagpieTheme.err : MagpieTheme.textSecondary)
+                        .font(Typography.nanoMono)
+                        .foregroundColor(clamped >= 90 ? StatusPalette.err : MagpieTheme.textSecondary)
                 }
             }
             if !w.text && !w.unlimited {
@@ -605,7 +615,7 @@ struct SubscriptionAccountsSection: View {
                             .fill(MagpieTheme.hairline)
                             .frame(height: 4)
                         Capsule()
-                            .fill(clamped >= 90 ? MagpieTheme.err : (clamped >= 70 ? MagpieTheme.warn : MagpieTheme.ok))
+                            .fill(clamped >= 90 ? StatusPalette.err : (clamped >= 70 ? StatusPalette.warn : StatusPalette.ok))
                             .frame(width: geo.size.width * CGFloat(clamped / 100.0), height: 4)
                     }
                 }
@@ -690,10 +700,10 @@ struct SubscriptionAccountsSection: View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
-                    .font(.system(size: 13.5, weight: .semibold))
+                    .font(Typography.rowTitle)
                     .foregroundColor(MagpieTheme.ink)
                 Text(subtitle)
-                    .font(.system(size: 11.5))
+                    .font(Typography.caption)
                     .foregroundColor(MagpieTheme.textSecondary)
             }
             Spacer()
@@ -717,7 +727,7 @@ struct SubscriptionAccountsSection: View {
                         .accessibilityIdentifier("maxAccountsLimitField")
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Spacing.sm) {
                             Button("不限 (null)") {
                                 maxAccountsInput = ""
                                 maxAccountsError = nil
@@ -738,7 +748,7 @@ struct SubscriptionAccountsSection: View {
                     if let err = maxAccountsError {
                         Text(err)
                             .font(.caption)
-                            .foregroundColor(MagpieTheme.err)
+                            .foregroundColor(StatusPalette.err)
                     }
 
                     Button("保存上限") {
@@ -776,7 +786,6 @@ struct SubscriptionAccountsSection: View {
             }
         }
         .navigationViewStyle(.stack)
-        .preferredColorScheme(.light)
     }
 
     // MARK: - Account Settings Sheet
@@ -835,7 +844,7 @@ struct SubscriptionAccountsSection: View {
                         .accessibilityIdentifier("accountWeightField")
 
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Spacing.sm) {
                             ForEach([1, 2, 3, 5, 10], id: \.self) { w in
                                 Button("\(w)x") {
                                     weightDraft = String(w)
@@ -850,7 +859,7 @@ struct SubscriptionAccountsSection: View {
                     if let wErr = weightError {
                         Text(wErr)
                             .font(.caption)
-                            .foregroundColor(MagpieTheme.err)
+                            .foregroundColor(StatusPalette.err)
                     }
 
                     Button("保存权重") {
@@ -940,7 +949,6 @@ struct SubscriptionAccountsSection: View {
             }
         }
         .navigationViewStyle(.stack)
-        .preferredColorScheme(.light)
     }
 
     private func accountModelsSheet(_ login: RemoteProviderLogin) -> some View {
@@ -989,7 +997,6 @@ struct SubscriptionAccountsSection: View {
             }
         }
         .navigationViewStyle(.stack)
-        .preferredColorScheme(.light)
     }
 
     private func routingQuickChip(id: String, title: String) -> some View {
@@ -997,8 +1004,8 @@ struct SubscriptionAccountsSection: View {
         return Button(title) {
             Task { await store.updateProviderRouting(provider, routing: id) }
         }
-        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-        .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+        .font(selected ? Typography.captionMedium : Typography.caption)
+        .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)

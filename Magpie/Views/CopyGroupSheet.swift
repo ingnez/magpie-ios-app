@@ -28,7 +28,7 @@ struct CopyGroupSheet: View {
                         if ok { dismiss() } else { error = store.lastActionError }
                     }
                 }.disabled(saving || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if let error = error { Text(error).foregroundColor(.red) }
+                if let error = error { Text(error).foregroundColor(StatusPalette.err) }
             }
             .navigationTitle("复制路由组")
             .toolbar { Button("取消") { dismiss() }.disabled(saving) }

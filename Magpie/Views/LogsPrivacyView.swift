@@ -143,7 +143,7 @@ struct LogsPrivacyView: View {
                         subTab = item
                     }
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.textSecondary)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 6)
                     .background(selected ? MagpieTheme.ink : MagpieTheme.surface)

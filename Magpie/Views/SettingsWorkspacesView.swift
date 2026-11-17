@@ -30,7 +30,7 @@ struct ProxiesManagerView: View {
             Form {
                 if let err = errorMsg {
                     Section {
-                        Text(err).foregroundColor(.red).font(.caption)
+                        Text(err).foregroundColor(StatusPalette.err).font(.caption)
                     }
                 }
 
@@ -66,7 +66,7 @@ struct ProxiesManagerView: View {
 
                 Section(header: Text("命名代理池 (\(store.remoteSettings.proxies.count)) · /api/proxies/*")) {
                     if store.remoteSettings.proxies.isEmpty {
-                        Text("尚未保存任何命名代理").font(.caption).foregroundColor(.secondary)
+                        Text("尚未保存任何命名代理").font(.caption).foregroundColor(MagpieTheme.textSecondary)
                     } else {
                         ForEach(store.remoteSettings.proxies) { px in
                             VStack(alignment: .leading, spacing: 6) {
@@ -74,10 +74,10 @@ struct ProxiesManagerView: View {
                                     Text(px.name).font(.headline)
                                     Spacer()
                                     if px.hasPass {
-                                        Text("已设密码").font(.caption2).foregroundColor(.secondary)
+                                        Text("已设密码").font(.caption2).foregroundColor(MagpieTheme.textSecondary)
                                     }
                                 }
-                                Text(px.url).font(.caption.monospaced()).foregroundColor(.secondary)
+                                Text(px.url).font(.caption.monospaced()).foregroundColor(MagpieTheme.textSecondary)
                                 if let check = px.check {
                                     Text(check.ok ? "测速通过：\(check.ms ?? 0) ms · \(check.ip ?? "") \(check.loc ?? "")" : "测速失败：\(check.error ?? "未知错误")")
                                         .font(.caption2.monospaced())
@@ -367,7 +367,7 @@ struct BackupSyncView: View {
             Form {
                 if let err = errorMsg {
                     Section {
-                        Text(err).foregroundColor(.red).font(.caption)
+                        Text(err).foregroundColor(StatusPalette.err).font(.caption)
                     }
                 }
 
@@ -488,7 +488,7 @@ struct BackupSyncView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.name).font(.caption.monospaced()).lineLimit(1)
-                                    Text("\(item.providers) 个供应商 · \(item.size / 1024) KB").font(.caption2).foregroundColor(.secondary)
+                                    Text("\(item.providers) 个供应商 · \(item.size / 1024) KB").font(.caption2).foregroundColor(MagpieTheme.textSecondary)
                                 }
                                 Spacer()
                                 Button("恢复此备份") {
@@ -747,7 +747,7 @@ struct ContextTuneView: View {
             Form {
                 if let err = errorMsg {
                     Section {
-                        Text(err).foregroundColor(.red).font(.caption)
+                        Text(err).foregroundColor(StatusPalette.err).font(.caption)
                     }
                 }
 
@@ -767,7 +767,7 @@ struct ContextTuneView: View {
                     Section(header: Text("智能调优建议")) {
                         Text(tuneState.gateway ? "当前处于纯网关模式，客户端会话文件不在本机。" : "当前周期内暂无足够的客户端会话采样数据。")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else {
                     ForEach(tuneState.agents) { agentGroup in
@@ -788,7 +788,7 @@ struct ContextTuneView: View {
                                             .font(.caption.monospaced())
                                         Text(String(format: "预计加权成本：%.1f → %.1f", c.cost, c.low))
                                             .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                            .foregroundColor(MagpieTheme.textSecondary)
                                     }
 
                                     if let t = adv.ttl {
@@ -796,7 +796,7 @@ struct ContextTuneView: View {
                                             .font(.caption.monospaced())
                                         Text(String(format: "5m 成本 %.1f vs 1h 成本 %.1f", t.short, t.hour))
                                             .font(.caption2)
-                                            .foregroundColor(.secondary)
+                                            .foregroundColor(MagpieTheme.textSecondary)
                                     }
 
                                     HStack(spacing: 12) {
@@ -1124,7 +1124,7 @@ struct SystemSettingsEditorView: View {
             Form {
                 if let err = errorMsg {
                     Section {
-                        Text(err).foregroundColor(.red).font(.caption)
+                        Text(err).foregroundColor(StatusPalette.err).font(.caption)
                     }
                 }
 
@@ -1639,7 +1639,7 @@ struct ModelPriceEditorView: View {
             Form {
                 if let err = errorMsg {
                     Section {
-                        Text(err).foregroundColor(.red).font(.caption)
+                        Text(err).foregroundColor(StatusPalette.err).font(.caption)
                     }
                 }
 

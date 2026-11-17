@@ -50,10 +50,17 @@ final class GatewayStore: ObservableObject {
 
     // MARK: - Usage & Quotas (`/api/usage`, `/api/usage/quotas`)
     @Published var usagePeriod: String = "today"
+    @Published var usagePeriodPreset: String = "today"
+    @Published var customUsageStart: Date = UsageDateRange.presetLastDays(7).startDate
+    @Published var customUsageEnd: Date = UsageDateRange.presetLastDays(7).endDate
     @Published var usageSummary: RemoteUsageResponse?
+    @Published var usageError: String?
     @Published var isLoadingUsage = false
     @Published var quotas: [RemoteUsageQuota] = []
     @Published var isLoadingQuotas = false
+
+    // MARK: - Navigation & Error Aggregation
+    @Published var pendingAccountJump: AccountJumpTarget?
 
     // MARK: - Masking & Caller Keys (`/api/masking/*`, `/api/caller-keys`)
     @Published var maskingSummary: RemoteMaskingSummary?
@@ -249,6 +256,8 @@ final class GatewayStore: ObservableObject {
         historyDays = []
         historyRoutes = []
         usageSummary = nil
+        usageError = nil
+        pendingAccountJump = nil
         quotas = []
         maskingSummary = nil
         maskingRecords = []
@@ -592,15 +601,61 @@ final class GatewayStore: ObservableObject {
 
     // MARK: - Usage & Quotas
 
+    // MARK: - Error Aggregation & Jump
+
+    var accountErrorItems: [AccountErrorItem] {
+        AccountErrorAggregator.aggregate(
+            providers: providers,
+            excludedAccounts: excludedAccounts,
+            loginUsageByAgent: loginUsageByAgent,
+            quotas: quotas,
+            routes: traceRoutes + historyRoutes
+        )
+    }
+
+    func jumpToAccount(_ item: AccountErrorItem) {
+        pendingAccountJump = AccountJumpTarget(
+            providerID: item.providerID,
+            tab: item.targetTab,
+            accountUser: item.accountUser,
+            keyID: item.keyID
+        )
+    }
+
     func refreshUsage(period: String? = nil) async {
-        if let p = period { usagePeriod = p }
+        if let p = period {
+            if p == "custom" {
+                usagePeriodPreset = "custom"
+                let range = UsageDateRange(startDate: customUsageStart, endDate: customUsageEnd)
+                usagePeriod = range.apiPeriodString()
+            } else if p.contains("..") {
+                usagePeriodPreset = "custom"
+                usagePeriod = p
+            } else {
+                usagePeriodPreset = p
+                usagePeriod = p
+            }
+        }
         isLoadingUsage = true
+        usageError = nil
         defer { isLoadingUsage = false }
         do {
             usageSummary = try await client.fetchUsage(period: usagePeriod)
         } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            usageError = msg
             recordActionError(error)
         }
+    }
+
+    func refreshCustomUsage(start: Date, end: Date) async {
+        let range = UsageDateRange(startDate: start, endDate: end)
+        let norm = range.normalized()
+        customUsageStart = norm.start
+        customUsageEnd = norm.end
+        usagePeriodPreset = "custom"
+        usagePeriod = range.apiPeriodString()
+        await refreshUsage()
     }
 
     func refreshQuotas(asked: Bool = true, all: Bool = false) async {

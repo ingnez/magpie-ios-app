@@ -8,6 +8,7 @@ struct DashboardView: View {
     @State private var traceMode: TraceDisplayMode = .live
     @State private var selectedRoute: RemoteRoute?
     @State private var showingAgents = false
+    @State private var showingAccountErrors = false
 
     enum TraceDisplayMode: String, CaseIterable {
         case live = "实时追踪"
@@ -34,8 +35,26 @@ struct DashboardView: View {
                         Task { await store.connectAndRefreshAll() }
                     }
                 } else {
-                    Button("Agents 与方案") { showingAgents = true }
-                        .buttonStyle(MagpieButtonStyle(tone: .secondary))
+                    HStack(spacing: Spacing.sm) {
+                        Button("Agents 与方案") { showingAgents = true }
+                            .buttonStyle(MagpieButtonStyle(tone: .secondary))
+
+                        let errItems = store.accountErrorItems
+                        if !errItems.isEmpty {
+                            Button {
+                                showingAccountErrors = true
+                            } label: {
+                                HStack(spacing: Spacing.xs) {
+                                    Circle()
+                                        .fill(StatusPalette.err)
+                                        .frame(width: 7, height: 7)
+                                    Text("异常账号 (\(errItems.count))")
+                                }
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: .danger))
+                            .accessibilityIdentifier("dashboardAccountErrorsButton")
+                        }
+                    }
                     gatewayOverviewSection
                     traceSection
                 }
@@ -48,6 +67,7 @@ struct DashboardView: View {
             await store.connectAndRefreshAll()
         }
         .sheet(isPresented: $showingAgents) { AgentsView(store: store) }
+        .sheet(isPresented: $showingAccountErrors) { AccountErrorsView(store: store) }
         .sheet(item: $selectedRoute) { route in
             RouteDetailSheet(store: store, route: route)
         }
@@ -256,7 +276,7 @@ struct DashboardView: View {
                         }
                     }
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.textSecondary)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -471,7 +491,6 @@ private struct RouteDetailSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
         .onAppear {
             Task {
                 switch await store.fetchCallDetail(routeID: route.id) {

@@ -11,8 +11,17 @@ struct ProvidersView: View {
     @State private var presentingGroupExtras = false
     @State private var testingProviderID: String?
     @State private var testResultsByID: [String: String] = [:]
+    struct ProviderDetailSelection: Identifiable, Equatable {
+        let id = UUID()
+        let providerID: String
+        var initialTab: ProviderDetailSheet.DetailTab = .overview
+        var highlightedAccountUser: String? = nil
+        var highlightedKeyID: String? = nil
+    }
+
     @State private var pendingDelete: RemoteProvider?
-    @State private var selectedProvider: RemoteProvider?
+    @State private var detailSelection: ProviderDetailSelection?
+    @State private var showingAccountErrors = false
     @State private var editingGroup: RemoteRoutingGroup?
     @State private var creatingGroup = false
     @State private var copyingGroup: RemoteRoutingGroup?
@@ -35,19 +44,26 @@ struct ProvidersView: View {
 
     var body: some View {
         ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: Spacing.sectionGap) {
                 HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: Spacing.xxs) {
                         Text(sectionTab == .providers ? "供应商号池" : "跨供应商路由组")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(Typography.pageTitle)
                             .foregroundColor(MagpieTheme.ink)
                         Text(subtitleText)
-                            .font(.system(size: 13))
+                            .font(Typography.body)
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                     Spacer()
                     if sectionTab == .providers {
-                        HStack(spacing: 6) {
+                        HStack(spacing: Spacing.xs) {
+                            Button("异常总览") {
+                                showingAccountErrors = true
+                            }
+                            .buttonStyle(MagpieButtonStyle(tone: store.accountErrorItems.isEmpty ? .subtle : .danger, compact: true))
+                            .disabled(store.activeServer == nil)
+                            .accessibilityIdentifier("openAccountErrorsButton")
+
                             Button("定价") {
                                 presentingPriceSheet = true
                             }
@@ -69,7 +85,7 @@ struct ProvidersView: View {
                             .disabled(store.activeServer == nil)
                         }
                     } else {
-                        HStack(spacing: 8) {
+                        HStack(spacing: Spacing.sm) {
                             Button("模板/导入/默认") {
                                 presentingGroupExtras = true
                             }
@@ -86,16 +102,17 @@ struct ProvidersView: View {
                 if store.activeServer == nil {
                     MinimalSection {
                         Text("请先在「总览」或「隐私与设置」中连接一台 magpie web 服务器。")
-                            .font(.system(size: 13))
+                            .font(Typography.body)
                             .foregroundColor(MagpieTheme.textSecondary)
                     }
                 } else if sectionTab == .providers {
                     searchField
+                    accountErrorsSummaryBanner
                     subscriptionNoticeCards
                     if filteredProviders.isEmpty {
                         MinimalSection {
                             Text(store.providers.isEmpty ? "服务端暂无已配置的供应商" : "没有匹配的供应商或模型")
-                                .font(.system(size: 13))
+                                .font(Typography.body)
                                 .foregroundColor(MagpieTheme.textSecondary)
                         }
                     } else {
@@ -114,7 +131,7 @@ struct ProvidersView: View {
                     if store.groups.isEmpty {
                         MinimalSection {
                             Text("服务端暂无路由组（group/*）")
-                                .font(.system(size: 13))
+                                .font(Typography.body)
                                 .foregroundColor(MagpieTheme.textSecondary)
                         }
                     } else {
@@ -124,9 +141,9 @@ struct ProvidersView: View {
                     }
                 }
             }
-            .padding(.horizontal, 22)
-            .padding(.top, 24)
-            .padding(.bottom, 100)
+            .padding(.horizontal, Spacing.pageHorizontal)
+            .padding(.top, Spacing.pageTop)
+            .padding(.bottom, Spacing.pageBottom)
         }
         .refreshable {
             await store.refreshProviders()
@@ -153,8 +170,27 @@ struct ProvidersView: View {
         .sheet(isPresented: $presentingGroupExtras) {
             GroupExtrasSheet(store: store)
         }
-        .sheet(item: $selectedProvider) { provider in
-            ProviderDetailSheet(store: store, providerID: provider.id)
+        .sheet(isPresented: $showingAccountErrors, onDismiss: {
+            consumePendingAccountJump(delay: 0.05)
+        }) {
+            AccountErrorsView(store: store)
+        }
+        .sheet(item: $detailSelection) { selection in
+            ProviderDetailSheet(
+                store: store,
+                providerID: selection.providerID,
+                initialTab: selection.initialTab,
+                highlightedAccountUser: selection.highlightedAccountUser,
+                highlightedKeyID: selection.highlightedKeyID
+            )
+        }
+        .onAppear {
+            consumePendingAccountJump(delay: 0.35)
+        }
+        .onChange(of: store.pendingAccountJump) { _ in
+            if !showingAccountErrors {
+                consumePendingAccountJump(delay: 0.35)
+            }
         }
         .sheet(item: $editingGroup) { group in
             GroupEditorSheet(store: store, existing: group)
@@ -201,15 +237,15 @@ struct ProvidersView: View {
     }
 
     private var segmentedHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Spacing.sm) {
             ForEach(ProviderSectionTab.allCases, id: \.self) { tab in
                 let selected = sectionTab == tab
                 Button(tab.rawValue) {
                     sectionTab = tab
                 }
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
-                .padding(.horizontal, 14)
+                .font(Typography.bodySmallMedium)
+                .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.textSecondary)
+                .padding(.horizontal, Spacing.cardGap)
                 .padding(.vertical, 7)
                 .background(selected ? MagpieTheme.ink : MagpieTheme.surface)
                 .clipShape(Capsule())
@@ -221,24 +257,85 @@ struct ProvidersView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Spacing.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
+                .font(Typography.body)
                 .foregroundColor(MagpieTheme.textMuted)
             TextField("搜索供应商或模型名…", text: $searchText)
-                .font(.system(size: 13.5, design: .monospaced))
+                .font(Typography.bodyInputMono)
                 .foregroundColor(MagpieTheme.ink)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Spacing.cardGap)
         .padding(.vertical, 10)
         .background(MagpieTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Corners.md, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: Corners.md, style: .continuous)
                 .stroke(MagpieTheme.hairline, lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private var accountErrorsSummaryBanner: some View {
+        let errItems = store.accountErrorItems
+        if !errItems.isEmpty {
+            let authCount = errItems.filter { $0.category == .auth }.count
+            let rateCount = errItems.filter { $0.category == .rateLimit }.count
+            let accent = authCount > 0 ? StatusPalette.err : StatusPalette.warn
+            let surfaceTint = authCount > 0 ? StatusPalette.errSurface : StatusPalette.warnSurface
+            Button {
+                showingAccountErrors = true
+            } label: {
+                HStack(spacing: Spacing.md) {
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("检测到 \(errItems.count) 个异常/冷却账号")
+                            .font(Typography.rowTitle)
+                            .foregroundColor(MagpieTheme.ink)
+                        Text("鉴权失效 \(authCount) · 限流冷却 \(rateCount) · 点击查看归类并快速跳转")
+                            .font(Typography.caption)
+                            .foregroundColor(MagpieTheme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    Text("查看")
+                        .font(Typography.captionMedium)
+                        .foregroundColor(accent)
+                    Image(systemName: "chevron.right")
+                        .font(Typography.captionMedium)
+                        .foregroundColor(accent)
+                }
+                .padding(Spacing.md)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(surfaceTint)
+                .clipShape(RoundedRectangle(cornerRadius: Corners.lg, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Corners.lg, style: .continuous)
+                        .stroke(accent.opacity(0.35), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("providersErrorSummaryBanner")
+        }
+    }
+
+    private func consumePendingAccountJump(delay: TimeInterval) {
+        guard let jump = store.pendingAccountJump else { return }
+        sectionTab = .providers
+        store.pendingAccountJump = nil
+        let targetTab: ProviderDetailSheet.DetailTab = jump.tab == .keys ? .keys : .overview
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            detailSelection = ProviderDetailSelection(
+                providerID: jump.providerID,
+                initialTab: targetTab,
+                highlightedAccountUser: jump.accountUser,
+                highlightedKeyID: jump.keyID
+            )
+        }
     }
 
     @ViewBuilder
@@ -246,8 +343,8 @@ struct ProvidersView: View {
         if !store.agyMoveUsers.isEmpty {
             MinimalSection(title: "Antigravity 迁移提示", trailingText: "安全迁移") {
                 Text("Google 会封禁在官方 Antigravity 客户端之外使用的账号。可将已保存账号一键迁至 local agy CLI：\(store.agyMoveUsers.joined(separator: ", "))")
-                    .font(.system(size: 12.5))
-                    .foregroundColor(MagpieTheme.warn)
+                    .font(Typography.bodySmall)
+                    .foregroundColor(StatusPalette.warn)
                 Button("一键迁移至 local agy CLI") {
                     Task { _ = await store.moveAntigravityToAgy() }
                 }
@@ -258,8 +355,8 @@ struct ProvidersView: View {
             MinimalSection(title: "\(candidate.name) 需迁移至插件", trailingText: candidate.package) {
                 let errMsg = candidate.error?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 Text(errMsg.isEmpty ? "该内置订阅已下线，请安装对应插件后继续使用已有账号与模型。" : errMsg)
-                    .font(.system(size: 12.5))
-                    .foregroundColor(MagpieTheme.warn)
+                    .font(Typography.bodySmall)
+                    .foregroundColor(StatusPalette.warn)
                 if !candidate.package.isEmpty {
                     Button("一键安装插件 \(candidate.package)") {
                         Task { _ = await store.installSubscriptionPlugin(spec: candidate.package) }
@@ -271,10 +368,10 @@ struct ProvidersView: View {
         ForEach(store.excludedAccounts.filter { !$0.quiet }) { ex in
             MinimalSection(title: "\(ex.agentName) 账号状态异常") {
                 Text(ex.why)
-                    .font(.system(size: 12.5))
+                    .font(Typography.bodySmall)
                     .foregroundColor(MagpieTheme.textSecondary)
                 if let pid = ex.provider, !pid.isEmpty {
-                    HStack(spacing: 8) {
+                    HStack(spacing: Spacing.sm) {
                         Button("重新恢复") {
                             Task { _ = await store.restoreExcludedProvider(id: pid, name: ex.agentName) }
                         }
@@ -293,25 +390,25 @@ struct ProvidersView: View {
         let isEnabled = !provider.off
         let statusKind: ConnectionStatusKind = provider.off ? .untested : (provider.ready ? .connected : .failed)
 
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 8) {
+        return VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack(alignment: .center, spacing: Spacing.sm) {
                 MagpieStatusLight(kind: statusKind)
                 Text(provider.name)
-                    .font(.system(size: 15.5, weight: .semibold))
+                    .font(Typography.cardTitle)
                     .foregroundColor(MagpieTheme.ink)
                 Spacer()
                 if store.providers.count > 1 {
                     Button("↑") {
                         Task { await store.moveProvider(provider, offset: -1) }
                     }
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(Typography.captionMono)
                     .foregroundColor(MagpieTheme.textSecondary)
                     .buttonStyle(.plain)
 
                     Button("↓") {
                         Task { await store.moveProvider(provider, offset: 1) }
                     }
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(Typography.captionMono)
                     .foregroundColor(MagpieTheme.textSecondary)
                     .buttonStyle(.plain)
                 }
@@ -326,18 +423,18 @@ struct ProvidersView: View {
             }
 
             Text(provider.primaryEndpointPreview)
-                .font(.system(size: 12, design: .monospaced))
+                .font(Typography.sectionHeaderMono)
                 .foregroundColor(MagpieTheme.textSecondary)
                 .lineLimit(1)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                HStack(spacing: Spacing.xs) {
                     MagpieTag(text: "\(provider.exposed)/\(provider.models.count) 模型")
                     let hasPool = (provider.account?.logins.count ?? 0) > 1 || provider.keyList.count > 1
                     if !provider.routing.isEmpty || hasPool {
                         MagpieTag(
                             text: SubscriptionCatalog.routingShortTag(provider.routing),
-                            tone: SubscriptionCatalog.isPriorityRouting(provider.routing) ? MagpieTheme.ink : MagpieTheme.ok
+                            tone: SubscriptionCatalog.isPriorityRouting(provider.routing) ? MagpieTheme.ink : StatusPalette.ok
                         )
                     }
                     if !provider.keyList.isEmpty {
@@ -345,7 +442,7 @@ struct ProvidersView: View {
                         MagpieTag(text: "\(onKeys)/\(provider.keyList.count) Key")
                         let restKeys = provider.keyList.filter { $0.rest != nil }.count
                         if restKeys > 0 {
-                            MagpieTag(text: "\(restKeys) 冷却", tone: MagpieTheme.warn)
+                            MagpieTag(text: "\(restKeys) 冷却", tone: StatusPalette.warn)
                         }
                     } else if let masked = provider.key?.masked, !masked.isEmpty {
                         MagpieTag(text: masked, monospaced: true)
@@ -354,21 +451,21 @@ struct ProvidersView: View {
                             let onCount = acc.logins.filter { !$0.paused && ($0.on || $0.active) && $0.lapsed == nil }.count
                             MagpieTag(text: "\(onCount)/\(acc.logins.count) 账号", tone: MagpieTheme.ink)
                             if let cap = provider.effectiveMaxAccounts, cap > 0, onCount > cap {
-                                MagpieTag(text: "上限 \(cap)", tone: MagpieTheme.warn)
+                                MagpieTag(text: "上限 \(cap)", tone: StatusPalette.warn)
                             }
                         }
                         if !provider.accountRests.isEmpty {
-                            MagpieTag(text: "\(provider.accountRests.count) 号冷却", tone: MagpieTheme.warn)
+                            MagpieTag(text: "\(provider.accountRests.count) 号冷却", tone: StatusPalette.warn)
                         }
                         let lapsedCount = acc.logins.filter { $0.lapsed != nil }.count
                         if lapsedCount > 0 {
-                            MagpieTag(text: "\(lapsedCount) 失效", tone: MagpieTheme.err)
+                            MagpieTag(text: "\(lapsedCount) 失效", tone: StatusPalette.err)
                         }
                         if let user = acc.user, !user.isEmpty {
                             MagpieTag(text: user)
                         }
                         if let plan = acc.plan, !plan.isEmpty {
-                            MagpieTag(text: plan, tone: MagpieTheme.ok)
+                            MagpieTag(text: plan, tone: StatusPalette.ok)
                         }
                     }
                 }
@@ -376,24 +473,24 @@ struct ProvidersView: View {
 
             if let err = provider.listError, !err.isEmpty {
                 Text(err)
-                    .font(.system(size: 11.5))
-                    .foregroundColor(MagpieTheme.err)
+                    .font(Typography.caption)
+                    .foregroundColor(StatusPalette.err)
             }
 
             if let testOutput = testResultsByID[provider.id] {
                 Text(testOutput)
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(Typography.captionMono)
                     .foregroundColor(MagpieTheme.textSecondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(MagpieTheme.canvas)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
             }
 
             Rectangle().fill(MagpieTheme.hairline).frame(height: 1)
 
-            HStack(spacing: 8) {
-                Button("管理") { selectedProvider = provider }
+            HStack(spacing: Spacing.sm) {
+                Button("管理") { detailSelection = ProviderDetailSelection(providerID: provider.id) }
                     .buttonStyle(MagpieButtonStyle(tone: .primary, compact: true))
                 if let agent = provider.account?.agent, !agent.isEmpty {
                     Button("授权") {
@@ -431,30 +528,30 @@ struct ProvidersView: View {
                 Button("删除") {
                     pendingDelete = provider
                 }
-                .font(.system(size: 12))
+                .font(Typography.sectionHeader)
                 .foregroundColor(MagpieTheme.textMuted)
                 .buttonStyle(.plain)
             }
         }
-        .padding(18)
+        .padding(Spacing.cardPadding)
         .background(MagpieTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Corners.xl, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Corners.xl, style: .continuous)
                 .stroke(MagpieTheme.hairline, lineWidth: 1)
         )
     }
 
     private func groupCard(_ group: RemoteRoutingGroup) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack(spacing: Spacing.sm) {
                 MagpieStatusLight(kind: group.isOff ? .untested : (group.ready ? .connected : .failed))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(group.name)
-                        .font(.system(size: 15.5, weight: .semibold))
+                        .font(Typography.cardTitle)
                         .foregroundColor(MagpieTheme.ink)
                     Text(group.ref)
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(Typography.captionMono)
                         .foregroundColor(MagpieTheme.textMuted)
                 }
                 Spacer()
@@ -462,14 +559,14 @@ struct ProvidersView: View {
                     Button("↑") {
                         Task { await store.moveGroup(group, offset: -1) }
                     }
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(Typography.captionMono)
                     .foregroundColor(MagpieTheme.textSecondary)
                     .buttonStyle(.plain)
 
                     Button("↓") {
                         Task { await store.moveGroup(group, offset: 1) }
                     }
-                    .font(.system(size: 11.5, design: .monospaced))
+                    .font(Typography.captionMono)
                     .foregroundColor(MagpieTheme.textSecondary)
                     .buttonStyle(.plain)
                 }
@@ -485,11 +582,11 @@ struct ProvidersView: View {
 
             if let note = group.note, !note.isEmpty {
                 Text(note)
-                    .font(.system(size: 12))
+                    .font(Typography.sectionHeader)
                     .foregroundColor(MagpieTheme.textSecondary)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: Spacing.xs) {
                 if !group.routing.isEmpty {
                     MagpieTag(text: "策略: \(group.routing)")
                 }
@@ -525,7 +622,7 @@ struct ProvidersView: View {
                     let isPicked = group.picked == member
                     HStack {
                         Text(member)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(Typography.sectionHeaderMono)
                             .foregroundColor(isPicked ? MagpieTheme.ink : MagpieTheme.textSecondary)
                             .lineLimit(1)
                         Spacer()
@@ -539,11 +636,11 @@ struct ProvidersView: View {
                 }
             }
         }
-        .padding(18)
+        .padding(Spacing.cardPadding)
         .background(MagpieTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Corners.xl, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: Corners.xl, style: .continuous)
                 .stroke(MagpieTheme.hairline, lineWidth: 1)
         )
     }
@@ -566,7 +663,7 @@ private struct GroupExtrasSheet: View {
                 Section(header: Text("从内置模板创建路由组 (/api/groups/template)")) {
                     TextField("自定义组名（留空使用模板默认名）", text: $templateName)
                     if store.groupTemplates.isEmpty {
-                        Text("服务端未返回内置模板").font(.caption).foregroundColor(.secondary)
+                        Text("服务端未返回内置模板").font(.caption).foregroundColor(MagpieTheme.textSecondary)
                     } else {
                         ForEach(store.groupTemplates) { tpl in
                             Button("创建「\(tpl.group.name.isEmpty ? tpl.kind : tpl.group.name)」") {
@@ -712,20 +809,20 @@ private struct AddProviderSheet: View {
             VStack(spacing: 0) {
                 HStack {
                     Button("取消") { dismiss() }
-                        .font(.system(size: 14))
+                        .font(Typography.bodyMedium)
                         .foregroundColor(MagpieTheme.textSecondary)
                     Spacer()
                     Text("新增远程供应商")
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(Typography.navTitle)
                         .foregroundColor(MagpieTheme.ink)
                     Spacer()
                     if mode == .subscription {
                         Text("选择平台")
-                            .font(.system(size: 13))
+                            .font(Typography.body)
                             .foregroundColor(MagpieTheme.textMuted)
                     } else {
                         Button(isSaving ? "保存中…" : "保存") { commit() }
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(Typography.bodyMedium)
                             .foregroundColor(MagpieTheme.ink)
                             .disabled(isSaving)
                     }
@@ -736,7 +833,7 @@ private struct AddProviderSheet: View {
                 .overlay(Rectangle().fill(MagpieTheme.hairline).frame(height: 1), alignment: .bottom)
 
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: Spacing.cardPadding) {
                         Picker("添加方式", selection: $mode) {
                             ForEach(CreationMode.allCases, id: \.self) { m in
                                 Text(m.rawValue).tag(m)
@@ -750,13 +847,13 @@ private struct AddProviderSheet: View {
                             if mode == .preset, !store.presets.isEmpty {
                                 MinimalSection(title: "选择厂商预设", trailingText: "\(filteredPresets.count)/\(store.presets.count) 个预设") {
                                     TextField("搜索预设：DeepSeek / Kimi / 智谱 / 火山 / 硅基流动…", text: $presetQuery)
-                                        .font(.system(size: 12.5))
+                                        .font(Typography.bodySmall)
                                         .autocapitalization(.none)
                                         .disableAutocorrection(true)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 7)
                                         .background(MagpieTheme.canvas)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                        .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
 
                                     ForEach(filteredPresets) { preset in
                                         Button {
@@ -771,11 +868,11 @@ private struct AddProviderSheet: View {
                                             HStack {
                                                 VStack(alignment: .leading, spacing: 2) {
                                                     Text(preset.displayTitle)
-                                                        .font(.system(size: 13.5, weight: .medium))
+                                                        .font(Typography.rowTitle)
                                                         .foregroundColor(MagpieTheme.ink)
                                                     if !preset.regions.isEmpty {
                                                         Text(preset.regions.map(\.name).joined(separator: " · "))
-                                                            .font(.system(size: 11))
+                                                            .font(Typography.micro)
                                                             .foregroundColor(MagpieTheme.textMuted)
                                                             .lineLimit(1)
                                                     }
@@ -785,7 +882,7 @@ private struct AddProviderSheet: View {
                                                     MagpieTag(text: "已添加")
                                                 }
                                                 if selectedPresetID == preset.id {
-                                                    MagpieTag(text: "已选", tone: MagpieTheme.ok)
+                                                    MagpieTag(text: "已选", tone: StatusPalette.ok)
                                                 }
                                             }
                                         }
@@ -793,7 +890,7 @@ private struct AddProviderSheet: View {
 
                                         if selectedPresetID == preset.id && preset.regions.count > 1 {
                                             ScrollView(.horizontal, showsIndicators: false) {
-                                                HStack(spacing: 6) {
+                                                HStack(spacing: Spacing.xs) {
                                                     ForEach(preset.regions) { reg in
                                                         let activeReg = selectedRegionID == reg.id
                                                         Button(reg.name) {
@@ -802,8 +899,8 @@ private struct AddProviderSheet: View {
                                                             anthropicURL = reg.anthropic ?? preset.anthropic ?? ""
                                                             responsesURL = reg.responses ?? preset.responses ?? ""
                                                         }
-                                                        .font(.system(size: 11.5, weight: activeReg ? .semibold : .medium))
-                                                        .foregroundColor(activeReg ? .white : MagpieTheme.ink)
+                                                        .font(activeReg ? Typography.captionMedium : Typography.caption)
+                                                        .foregroundColor(activeReg ? MagpieTheme.onInk : MagpieTheme.ink)
                                                         .padding(.horizontal, 10)
                                                         .padding(.vertical, 5)
                                                         .background(activeReg ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -818,7 +915,7 @@ private struct AddProviderSheet: View {
                             } else if mode == .preset && store.presets.isEmpty {
                                 MinimalSection(title: "提示") {
                                     Text("服务端未返回内置 API Key 预设，可切换为「自定义地址」或「订阅 OAuth」。")
-                                        .font(.system(size: 12.5))
+                                        .font(Typography.bodySmall)
                                         .foregroundColor(MagpieTheme.textSecondary)
                                 }
                             }
@@ -841,7 +938,6 @@ private struct AddProviderSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
         .onAppear {
             mode = initialMode
             Task { await store.refreshPluginListings() }
@@ -850,20 +946,20 @@ private struct AddProviderSheet: View {
 
     @ViewBuilder
     private var subscriptionListContent: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Spacing.sm) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 13))
+                .font(Typography.body)
                 .foregroundColor(MagpieTheme.textMuted)
             TextField("搜索平台：反重力 / Codex / Claude / Gemini / Copilot…", text: $subQuery)
-                .font(.system(size: 13))
+                .font(Typography.body)
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(MagpieTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Corners.md, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Corners.md, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
 
         let filteredBuiltins = catalog.builtins.filter(matches)
         let filteredExtras = catalog.extraPlugins.filter(matches)
@@ -897,7 +993,7 @@ private struct AddProviderSheet: View {
                 ForEach(quietRemoved) { ex in
                     HStack {
                         Text(ex.agentName)
-                            .font(.system(size: 13.5, weight: .semibold))
+                            .font(Typography.rowTitle)
                             .foregroundColor(MagpieTheme.ink)
                         Spacer()
                         if let pid = ex.provider {
@@ -924,12 +1020,12 @@ private struct AddProviderSheet: View {
         } label: {
             HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: Spacing.xs) {
                         Text(platform.name)
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(Typography.bodyMedium)
                             .foregroundColor(MagpieTheme.ink)
                         if count > 0 {
-                            MagpieTag(text: "\(count) 账号", tone: MagpieTheme.ok)
+                            MagpieTag(text: "\(count) 账号", tone: StatusPalette.ok)
                         }
                         if platform.isPluginBacked {
                             MagpieTag(text: "插件", tone: MagpieTheme.ink)
@@ -937,21 +1033,21 @@ private struct AddProviderSheet: View {
                             MagpieTag(text: "待装插件")
                         }
                         if platform.risk {
-                            MagpieTag(text: "风控", tone: MagpieTheme.warn)
+                            MagpieTag(text: "风控", tone: StatusPalette.warn)
                         }
                     }
                     Text(platform.subtitle)
-                        .font(.system(size: 12))
+                        .font(Typography.sectionHeader)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .lineLimit(1)
                     Text(platform.plans)
-                        .font(.system(size: 11))
+                        .font(Typography.micro)
                         .foregroundColor(MagpieTheme.textMuted)
                         .lineLimit(1)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(Typography.sectionHeader)
                     .foregroundColor(MagpieTheme.textMuted)
             }
             .padding(.vertical, 6)

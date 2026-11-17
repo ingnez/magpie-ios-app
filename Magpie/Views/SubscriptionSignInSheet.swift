@@ -157,7 +157,7 @@ struct SubscriptionSignInSheet: View {
                         headerBanner
                         contentForPhase
                     }
-                    .padding(20)
+                    .padding(Spacing.sheetPadding)
                     .padding(.bottom, 30)
                 }
             }
@@ -196,7 +196,6 @@ struct SubscriptionSignInSheet: View {
                 handlePickedFiles(result)
             }
         }
-        .preferredColorScheme(.light)
     }
 
     // MARK: - Header
@@ -211,7 +210,7 @@ struct SubscriptionSignInSheet: View {
                     MagpieTag(text: "插件", tone: MagpieTheme.ink)
                 }
                 if platform.risk {
-                    MagpieTag(text: "注意风控", tone: MagpieTheme.warn)
+                    MagpieTag(text: "注意风控", tone: StatusPalette.warn)
                 }
             }
             Text(platform.subtitle)
@@ -228,11 +227,11 @@ struct SubscriptionSignInSheet: View {
                     .foregroundColor(MagpieTheme.ink)
             }
         }
-        .padding(16)
+        .padding(Spacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(MagpieTheme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: Corners.lg, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Corners.lg, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
     }
 
     // MARK: - Phase Router
@@ -286,7 +285,7 @@ struct SubscriptionSignInSheet: View {
             }
             Text(platform.riskNote ?? "该平台可能对官方客户端之外的代理调用进行风控，建议使用可承受风险的账号。")
                 .font(.system(size: 13))
-                .foregroundColor(MagpieTheme.warn)
+                .foregroundColor(StatusPalette.warn)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 10) {
@@ -314,17 +313,17 @@ struct SubscriptionSignInSheet: View {
                     if activePlatform.single {
                         Text("该平台当前仅支持保留单个账号，继续授权将替换现有登录。")
                             .font(.system(size: 12.5))
-                            .foregroundColor(MagpieTheme.warn)
+                            .foregroundColor(StatusPalette.warn)
                     } else if let cap = existingProvider?.effectiveMaxAccounts, cap > 0, existingLogins.count >= cap {
                         Text("当前号池已有 \(existingLogins.count) 个账号（同时上限 \(cap) 个）；本次仍可继续追加新账号进入号池（不覆盖已有账号），超出上限的账号将作为候补顺延。")
                             .font(.system(size: 12.5))
-                            .foregroundColor(MagpieTheme.warn)
+                            .foregroundColor(StatusPalette.warn)
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         let capLabel = existingProvider?.maxAccountsSummary ?? "不限 (null)"
                         Text("当前已有 \(existingLogins.count) 个账号（同时调度：\(capLabel)）；本次授权将追加新账号进入号池，不会覆盖已有登录。")
                             .font(.system(size: 12.5))
-                            .foregroundColor(MagpieTheme.ok)
+                            .foregroundColor(StatusPalette.ok)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -362,7 +361,7 @@ struct SubscriptionSignInSheet: View {
                             }
                             .padding(12)
                             .background(MagpieTheme.canvas)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: Corners.md, style: .continuous))
                         }
                     }
                 }
@@ -377,7 +376,7 @@ struct SubscriptionSignInSheet: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(MagpieTheme.canvas)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
 
                     if let err = errorText {
                         MagpieErrorBanner(title: "插件安装失败", message: err)
@@ -429,7 +428,7 @@ struct SubscriptionSignInSheet: View {
                     if plugin.methods.isEmpty {
                         Text("该插件未提供可用登录方式")
                             .font(.system(size: 12.5))
-                            .foregroundColor(MagpieTheme.warn)
+                            .foregroundColor(StatusPalette.warn)
                     } else {
                         ForEach(Array(plugin.methods.enumerated()), id: \.offset) { idx, method in
                             Button {
@@ -451,7 +450,7 @@ struct SubscriptionSignInSheet: View {
                                 }
                                 .padding(12)
                                 .background(MagpieTheme.canvas)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: Corners.md, style: .continuous))
                             }
                         }
                     }
@@ -560,9 +559,9 @@ struct SubscriptionSignInSheet: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
         .background(active ? MagpieTheme.ink : MagpieTheme.canvas)
-        .foregroundColor(active ? .white : MagpieTheme.textSecondary)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: active ? 0 : 1))
+        .foregroundColor(active ? MagpieTheme.onInk : MagpieTheme.textSecondary)
+        .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: active ? 0 : 1))
     }
 
     // MARK: - Claude Setup-Token
@@ -694,7 +693,7 @@ struct SubscriptionSignInSheet: View {
                             }
                             .padding(11)
                             .background(MagpieTheme.canvas)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
                         }
                         .disabled(isBusy)
                     }
@@ -977,8 +976,8 @@ struct SubscriptionSignInSheet: View {
                 .frame(minHeight: 110)
                 .padding(8)
                 .background(MagpieTheme.canvas)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Corners.sm + 1, style: .continuous).stroke(MagpieTheme.hairline, lineWidth: 1))
 
             if let err = errorText {
                 MagpieErrorBanner(title: "导入失败", message: err)
@@ -1016,7 +1015,7 @@ struct SubscriptionSignInSheet: View {
             ForEach(importResults) { item in
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
-                        .fill(item.status == "failed" ? MagpieTheme.err : MagpieTheme.ok)
+                        .fill(item.status == "failed" ? StatusPalette.err : StatusPalette.ok)
                         .frame(width: 7, height: 7)
                         .padding(.top, 5)
                     VStack(alignment: .leading, spacing: 2) {
@@ -1025,7 +1024,7 @@ struct SubscriptionSignInSheet: View {
                             .foregroundColor(MagpieTheme.ink)
                         Text(importStatusLabel(item.status) + (item.error.map { " · \($0)" } ?? ""))
                             .font(.system(size: 11.5))
-                            .foregroundColor(item.status == "failed" ? MagpieTheme.err : MagpieTheme.textSecondary)
+                            .foregroundColor(item.status == "failed" ? StatusPalette.err : MagpieTheme.textSecondary)
                     }
                 }
             }
@@ -1051,7 +1050,7 @@ struct SubscriptionSignInSheet: View {
         MinimalSection(title: "导出账号到服务端目录") {
             Text("导出文件包含实时登录凭据，将由服务端以 0600 权限保存至服务器 Downloads 目录。")
                 .font(.system(size: 12.5))
-                .foregroundColor(MagpieTheme.warn)
+                .foregroundColor(StatusPalette.warn)
 
             Picker("导出格式", selection: $exportFormat) {
                 Text("Sub2API").tag("sub2api")
@@ -1109,12 +1108,12 @@ struct SubscriptionSignInSheet: View {
                 if !res.accounts.isEmpty {
                     Text("已导出账号：\(res.accounts.joined(separator: ", "))")
                         .font(.system(size: 12))
-                        .foregroundColor(MagpieTheme.ok)
+                        .foregroundColor(StatusPalette.ok)
                 }
                 ForEach(res.skipped) { s in
                     Text("跳过 \(s.user)：\(s.error ?? "")")
                         .font(.system(size: 11.5))
-                        .foregroundColor(MagpieTheme.warn)
+                        .foregroundColor(StatusPalette.warn)
                 }
             }
             Button("完成") { dismiss() }
@@ -1129,7 +1128,7 @@ struct SubscriptionSignInSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
                     .font(.system(size: 24))
-                    .foregroundColor(MagpieTheme.ok)
+                    .foregroundColor(StatusPalette.ok)
                 VStack(alignment: .leading, spacing: 3) {
                     Text(signInState?.user ?? platform.name)
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))

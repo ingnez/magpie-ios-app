@@ -30,11 +30,23 @@ enum MagpieTab: String, CaseIterable, Identifiable {
 @main
 struct MagpieApp: App {
     @StateObject private var store = GatewayStore()
+    @AppStorage("magpie.appearance") private var appearancePreference: String = "system"
+
+    private var preferredScheme: ColorScheme? {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-magpie-dark-mode") { return .dark }
+        if args.contains("-magpie-light-mode") { return .light }
+        switch appearancePreference {
+        case "dark": return .dark
+        case "light": return .light
+        default: return nil
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
             MagpieRootView(store: store)
-                .preferredColorScheme(.light)
+                .preferredColorScheme(preferredScheme)
                 .accentColor(MagpieTheme.ink)
         }
     }
@@ -88,17 +100,22 @@ struct MagpieRootView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: store.toastMessage)
+        .onChange(of: store.pendingAccountJump) { jump in
+            if jump != nil {
+                selectedTab = .providers
+            }
+        }
         .sheet(isPresented: $presentingNewServer) {
             ServerEditorSheet(store: store, existing: nil)
         }
     }
 
     private var minimalHeader: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: Spacing.md - 2) {
             MagpieMarkView(size: 24)
 
             Text("Magpie")
-                .font(.system(size: 17, weight: .semibold))
+                .font(Typography.sheetTitle)
                 .foregroundColor(MagpieTheme.ink)
 
             Spacer()
@@ -106,18 +123,18 @@ struct MagpieRootView: View {
             Button {
                 presentingNewServer = true
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: Spacing.xs) {
                     MagpieStatusLight(kind: store.health.kind)
                     Text(store.activeServer?.hostLabel ?? "未连接")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(Typography.sectionHeaderMono)
                         .foregroundColor(MagpieTheme.textSecondary)
                         .lineLimit(1)
                 }
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 14)
+        .padding(.horizontal, Spacing.pageHorizontal)
+        .padding(.vertical, Spacing.cardGap)
         .background(MagpieTheme.canvas)
         .overlay(
             Rectangle()
@@ -134,7 +151,7 @@ struct MagpieRootView: View {
                 Button {
                     selectedTab = tab
                 } label: {
-                    VStack(spacing: 4) {
+                    VStack(spacing: Spacing.xxs) {
                         Image(systemName: tab.iconName)
                             .font(.system(size: 16, weight: isSelected ? .semibold : .regular))
                         Text(tab.title)
@@ -148,7 +165,7 @@ struct MagpieRootView: View {
                 .accessibilityIdentifier("tab.\(tab.rawValue)")
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, Spacing.md)
         .background(MagpieTheme.surface)
         .overlay(
             Rectangle()
@@ -160,10 +177,10 @@ struct MagpieRootView: View {
 
     private func toastPill(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12.5, weight: .medium))
-            .foregroundColor(MagpieTheme.surface)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .font(Typography.bodySmallMedium)
+            .foregroundColor(MagpieTheme.onInk)
+            .padding(.horizontal, Spacing.cardGap)
+            .padding(.vertical, Spacing.sm)
             .background(MagpieTheme.ink)
             .clipShape(Capsule())
     }

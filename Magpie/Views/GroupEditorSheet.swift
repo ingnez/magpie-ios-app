@@ -106,7 +106,6 @@ struct GroupEditorSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
         .onAppear(perform: loadExisting)
         .sheet(isPresented: $showingMemberPicker) {
             memberPickerSheet
@@ -145,7 +144,7 @@ struct GroupEditorSheet: View {
                     activeSection = sec
                 }
                 .font(.system(size: 12.5, weight: .medium))
-                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.textSecondary)
+                .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.textSecondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(selected ? MagpieTheme.ink : MagpieTheme.surface)
@@ -186,7 +185,7 @@ struct GroupEditorSheet: View {
                                 let selected = routing == mode.id
                                 Button(mode.title) { routing = mode.id }
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
                                     .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -209,7 +208,7 @@ struct GroupEditorSheet: View {
                                 let selected = affinity == mode.id
                                 Button(mode.title) { affinity = mode.id }
                                     .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                    .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
                                     .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -231,7 +230,7 @@ struct GroupEditorSheet: View {
                             let selected = sinkMode == item.0
                             Button(item.1) { sinkMode = item.0 }
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                                .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                                 .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -444,7 +443,7 @@ struct GroupEditorSheet: View {
                             ForEach((store.groupDeciders + store.groupModels).prefix(12)) { m in
                                 Button(m.id) { classifier = m.id }
                                     .font(.system(size: 11.5, design: .monospaced))
-                                    .foregroundColor(classifier == m.id ? MagpieTheme.surface : MagpieTheme.ink)
+                                    .foregroundColor(classifier == m.id ? MagpieTheme.onInk : MagpieTheme.ink)
                                     .padding(.horizontal, 9)
                                     .padding(.vertical, 5)
                                     .background(classifier == m.id ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -500,7 +499,7 @@ struct GroupEditorSheet: View {
                         let selected = contextMode == item.0
                         Button(item.1) { contextMode = item.0 }
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(selected ? MagpieTheme.surface : MagpieTheme.ink)
+                            .foregroundColor(selected ? MagpieTheme.onInk : MagpieTheme.ink)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
                             .background(selected ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -658,7 +657,6 @@ struct GroupEditorSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 
     private var ruleEditorSheet: some View {
@@ -719,7 +717,7 @@ struct GroupEditorSheet: View {
                                         ForEach(candidateTargets.prefix(15), id: \.self) { m in
                                             Button(m) { ruleUse = m }
                                                 .font(.system(size: 11.5, design: .monospaced))
-                                                .foregroundColor(ruleUse == m ? MagpieTheme.surface : MagpieTheme.ink)
+                                                .foregroundColor(ruleUse == m ? MagpieTheme.onInk : MagpieTheme.ink)
                                                 .padding(.horizontal, 9)
                                                 .padding(.vertical, 5)
                                                 .background(ruleUse == m ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -747,7 +745,7 @@ struct GroupEditorSheet: View {
                                             ForEach(effortChoices, id: \.self) { lvl in
                                                 Button(lvl.isEmpty ? "跟随客户端" : lvl) { ruleUseEffort = lvl }
                                                     .font(.system(size: 12, design: .monospaced))
-                                                    .foregroundColor(ruleUseEffort == lvl ? MagpieTheme.surface : MagpieTheme.ink)
+                                                    .foregroundColor(ruleUseEffort == lvl ? MagpieTheme.onInk : MagpieTheme.ink)
                                                     .padding(.horizontal, 9)
                                                     .padding(.vertical, 5)
                                                     .background(ruleUseEffort == lvl ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -790,7 +788,7 @@ struct GroupEditorSheet: View {
                                             ForEach(["", "on", "low", "medium", "high", "xhigh", "max"], id: \.self) { lvl in
                                                 Button(lvl.isEmpty ? "不限" : lvl) { ruleEffort = lvl }
                                                     .font(.system(size: 12, design: .monospaced))
-                                                    .foregroundColor(ruleEffort == lvl ? MagpieTheme.surface : MagpieTheme.ink)
+                                                    .foregroundColor(ruleEffort == lvl ? MagpieTheme.onInk : MagpieTheme.ink)
                                                     .padding(.horizontal, 9)
                                                     .padding(.vertical, 5)
                                                     .background(ruleEffort == lvl ? MagpieTheme.ink : MagpieTheme.canvas)
@@ -820,7 +818,6 @@ struct GroupEditorSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
     }
 
     // MARK: - Load & Commit

@@ -124,7 +124,6 @@ struct ServerEditorSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.light)
         .onAppear {
             if let existing = existing {
                 name = existing.name

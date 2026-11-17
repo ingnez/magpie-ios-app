@@ -1062,6 +1062,8 @@ struct RemoteKeyRest: Decodable, Equatable {
     let model: String?
     let probed: Bool?
     let by: String?
+    let error: String?
+    let failures: Int?
 }
 
 struct RemoteKeySpend: Decodable, Equatable {

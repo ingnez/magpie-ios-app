@@ -360,6 +360,78 @@ final class MagpieScreenshotTests: XCTestCase {
         tap("完成并返回", app: app)
     }
 
+
+    func testCapturePhase2DarkAndFeatures() throws {
+        let server = try FixtureHTTPServer()
+        fixture = server
+        let app = XCUIApplication()
+        app.launchArguments = ["-magpie-dark-mode"]
+        app.launch()
+
+        tap("连接 magpie web", app: app)
+        let name = app.textFields["例如：家里 NAS / 云服务器"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap(); name.typeText("深色与二期演示")
+        let address = app.textFields["https://your-host:3430/?k=..."]
+        address.tap(); address.typeText("http://127.0.0.1:\(server.port)/?k=fixture-only-not-a-real-key")
+        tap("保存并连接", app: app)
+        XCTAssertTrue(app.staticTexts["1 模型在线"].waitForExistence(timeout: 20))
+        shot("30-dark-dashboard-demo")
+
+        // Open Error Overview from Dashboard
+        tap("dashboardAccountErrorsButton", app: app)
+        XCTAssertTrue(app.staticTexts["账号异常总览"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["expired-codex@example.com"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["demo2@gmail.com"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["连续失败 3 次"].waitForExistence(timeout: 5))
+        shot("31-dark-account-errors-demo")
+
+        // Click demo2@gmail.com -> jumps straight to Providers -> ProviderDetailSheet -> 多账号号池 -> demo2@gmail.com
+        tap("errorAccountRow_demo2@gmail.com", app: app, scroll: true)
+        let detailScroller = app.scrollViews["providerDetailScrollView"]
+        XCTAssertTrue(detailScroller.waitForExistence(timeout: 10))
+        XCTAssertTrue(detailScroller.staticTexts["accountTitle_demo2@gmail.com"].waitForExistence(timeout: 10))
+        shot("32-dark-account-pool-jump-demo")
+        tap("关闭", app: app)
+
+        // Providers view in Dark Mode
+        XCTAssertTrue(app.staticTexts["供应商号池"].waitForExistence(timeout: 5))
+        shot("33-dark-providers-demo")
+
+        // OAuth Sign-In sheet in Dark Mode
+        tap("OAuth 授权", app: app)
+        XCTAssertTrue(app.staticTexts["Antigravity (谷歌反重力)"].waitForExistence(timeout: 10))
+        app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "Antigravity (谷歌反重力)")).firstMatch.tap()
+        if app.buttons["仍然继续授权"].waitForExistence(timeout: 2) {
+            tap("仍然继续授权", app: app)
+        }
+        tap("startOAuthButton", app: app, scroll: true)
+        XCTAssertTrue(app.buttons["提交并完成登录"].waitForExistence(timeout: 10))
+        shot("34-dark-oauth-signin-demo")
+        tap("取消登录", app: app, scroll: true)
+        tap("关闭", app: app)
+
+        // Usage page in Dark Mode + Custom Date Range + Empty State
+        tab("usage", app: app)
+        XCTAssertTrue(app.staticTexts["用量趋势"].waitForExistence(timeout: 10))
+        shot("35-dark-usage-today-demo")
+
+        tap("usagePeriod_custom", app: app)
+        XCTAssertTrue(app.buttons["applyCustomUsageRangeButton"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["42"].waitForExistence(timeout: 10))
+        shot("36-dark-usage-custom-range-demo")
+
+        tap("上月", app: app)
+        XCTAssertTrue(app.staticTexts["所选区间暂无用量记录"].waitForExistence(timeout: 10))
+        shot("37-dark-usage-custom-empty-demo")
+
+        let customUsageCalled = server.trace().contains { row in
+            (row["path"] as? String == "/api/usage") &&
+            ((row["query"] as? String ?? "").contains(".."))
+        }
+        XCTAssertTrue(customUsageCalled, "Custom usage period must query /api/usage?period=YYYY-MM-DD..YYYY-MM-DD")
+    }
+
     private func exerciseOAuthAccounts(app: XCUIApplication, server: FixtureHTTPServer) throws {
         func payload(_ path: String) -> [String: Any] {
             let row = server.requests().last { $0["path"] as? String == path }

@@ -16,7 +16,7 @@ struct MaskingRulesEditor: View {
     var body: some View {
         NavigationView {
             Form {
-                if let error = error { Text(error).foregroundColor(.red) }
+                if let error = error { Text(error).foregroundColor(StatusPalette.err) }
                 Section(header: Text("自定义敏感词")) {
                     TextEditor(text: $words).frame(minHeight: 100)
                     Text("每行一个词").font(.caption)
@@ -118,7 +118,7 @@ struct MaskingRecordDetail: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     Text("\(record.t) · \(record.n) 处命中").font(.caption)
-                    if let error = error { Text(error).foregroundColor(.red) }
+                    if let error = error { Text(error).foregroundColor(StatusPalette.err) }
                     MinimalSection(title: "发送给上游的内容") {
                         Text(sent ?? "服务端未保留内容，或该内容已随重启清除").font(.caption.monospaced()).textSelection(.enabled)
                     }

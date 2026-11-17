@@ -76,7 +76,7 @@ final class FixtureHTTPServer {
 
     private func answer(_ connection: NWConnection, method: String, url: URLComponents, headers: String, body: Data) {
         let path = url.path
-        lock.lock(); traceRows.append(["method": method, "path": path, "hasSession": headers.contains("magpie_web_fixture=test-session")]); lock.unlock()
+        lock.lock(); traceRows.append(["method": method, "path": path, "query": url.query ?? "", "hasSession": headers.contains("magpie_web_fixture=test-session")]); lock.unlock()
         if method == "GET", path == "/api/state", let key = url.queryItems?.first(where: { $0.name == "k" })?.value {
             guard key == "fixture-only-not-a-real-key" else { json(connection, ["error": "wrong fixture key"], status: 401); return }
             send(connection, Data(), status: 303, extra: "Set-Cookie: magpie_web_fixture=test-session; Path=/; HttpOnly; SameSite=Strict\r\nLocation: /api/state\r\n")
@@ -87,6 +87,30 @@ final class FixtureHTTPServer {
             if path == "/" {
                 let html = "<!doctype html><meta name='viewport' content='width=device-width'><h1>控制台联调演示</h1><p>Cookie 会话验证通过</p><p id=tab></p><script>if(localStorage.getItem('magpie.usageTab')==='context')document.getElementById('tab').textContent='上下文页签选择通过'</script>"
                 send(connection, Data(html.utf8), type: "text/html; charset=utf-8"); return
+            }
+            if path == "/api/usage" {
+                let period = url.queryItems?.first(where: { $0.name == "period" })?.value ?? "today"
+                if period.contains("..") {
+                    if period < "2026-11" {
+                        json(connection, [
+                            "period": period, "calls": 0, "errors": 0, "input": 0, "output": 0, "cost": 0.0,
+                            "bucket": "day", "series": [], "agents": [], "models": [], "accounts": [], "callerKeys": []
+                        ])
+                    } else {
+                        json(connection, [
+                            "period": period, "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34,
+                            "bucket": "day",
+                            "series": [
+                                ["label": "11-15", "calls": 14, "input": 18000, "output": 6000, "cost": 0.11],
+                                ["label": "11-16", "calls": 18, "input": 24000, "output": 8000, "cost": 0.15],
+                                ["label": "11-17", "calls": 10, "input": 12000, "output": 4000, "cost": 0.08]
+                            ],
+                            "models": [["id": "gpt-demo", "name": "gpt-demo", "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34]],
+                            "agents": [["id": "claude", "name": "Claude Code 演示", "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34]]
+                        ])
+                    }
+                    return
+                }
             }
             let value: Any? = { lock.lock(); defer { lock.unlock() }; return responses[path] }()
             guard let value = value else { json(connection, ["error": "unknown GET: \(path)"], status: 404); return }

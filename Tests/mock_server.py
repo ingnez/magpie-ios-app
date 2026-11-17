@@ -95,14 +95,33 @@ AGY_PROVIDER = {
         "user": "demo1@gmail.com",
         "plan": "Google AI Pro",
         "logins": [
-            {"agent": "antigravity", "user": "demo1@gmail.com", "plan": "Google AI Pro", "active": True, "on": True},
-            {"agent": "antigravity", "user": "demo2@gmail.com", "plan": "free", "active": False, "on": True}
+            {"agent": "antigravity", "user": "demo1@gmail.com", "plan": "Google AI Pro", "active": True, "on": True, "seen": "2026-11-18T02:10:00+08:00"},
+            {"agent": "antigravity", "user": "demo2@gmail.com", "plan": "free", "active": False, "on": True, "seen": "2026-11-17T21:40:00+08:00"}
         ]
     },
     "accountWeights": {"demo1@gmail.com": 2, "demo2@gmail.com": 1},
     "accountRests": {
         "demo2@gmail.com": [
-            {"why": "rate", "status": 429, "until": "2026-11-17T22:15:00+08:00", "rate": True, "key": "antigravity#demo2@gmail.com"}
+            {"why": "rate", "status": 429, "until": "2026-11-17T22:15:00+08:00", "rate": True, "by": "backoff", "error": "429 Too Many Requests: quota rate limited", "failures": 3, "key": "antigravity#demo2@gmail.com"}
+        ]
+    }
+}
+CODEX_ERROR_PROVIDER = {
+    "id": "codex",
+    "name": "ChatGPT (Codex)",
+    "ready": False,
+    "routing": "order",
+    "models": [
+        {"id": "gpt-5-codex", "name": "GPT-5 Codex", "on": True, "context": 200000}
+    ],
+    "exposed": 1,
+    "account": {
+        "agent": "codex",
+        "agentName": "Codex",
+        "user": "expired-codex@example.com",
+        "plan": "plus",
+        "logins": [
+            {"agent": "codex", "user": "expired-codex@example.com", "plan": "plus", "active": False, "on": True, "lapsed": "refresh_token_revoked", "seen": "2026-11-17T20:15:00+08:00"}
         ]
     }
 }
@@ -310,7 +329,7 @@ PRIVACY_MODEL = {
 RESPONSES = {
     "/api/state": STATE,
     "/api/settings": SETTINGS,
-    "/api/providers": {"providers": [PROVIDER, AGY_PROVIDER], "presets": [PRESET], "plugins": [PLUGIN_SUB], "gateway": {"running": True, "url": "http://127.0.0.1:3425"}},
+    "/api/providers": {"providers": [PROVIDER, AGY_PROVIDER, CODEX_ERROR_PROVIDER], "presets": [PRESET], "plugins": [PLUGIN_SUB], "gateway": {"running": True, "url": "http://127.0.0.1:3425"}},
     "/api/plugins/listings": {"listings": [
         {"package": "@magpie-community/opencode-zen-free-auth", "name": "OpenCode Zen Free", "icon": "opencode", "providers": ["opencode-zen-free"], "community": True, "summary": {"zh": "使用 public 凭证接入 OpenCode Zen 免费模型"}},
         {"package": "@magpie-community/opencode-agy-cli-auth", "name": "Antigravity (local agy CLI)", "icon": "antigravity-color", "providers": ["agy-cli"], "community": True, "summary": {"zh": "通过本机 agy CLI 安全接入 Google Antigravity"}}
@@ -367,6 +386,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
             return
+        if parsed.path == "/api/usage":
+            period = (parse_qs(parsed.query).get("period") or ["today"])[0]
+            if ".." in period:
+                if period < "2026-11":
+                    self.reply({"period": period, "calls": 0, "errors": 0, "input": 0, "output": 0, "cost": 0.0, "bucket": "day", "series": [], "agents": [], "models": []})
+                else:
+                    self.reply({
+                        "period": period, "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34, "bucket": "day",
+                        "series": [{"label": "11-15", "calls": 14, "input": 18000, "output": 6000, "cost": 0.11}, {"label": "11-16", "calls": 18, "input": 24000, "output": 8000, "cost": 0.15}, {"label": "11-17", "calls": 10, "input": 12000, "output": 4000, "cost": 0.08}],
+                        "models": [{"id": "gpt-demo", "name": "gpt-demo", "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34}],
+                        "agents": [{"id": "claude", "name": "Claude Code 演示", "calls": 42, "errors": 1, "input": 54000, "output": 18000, "cost": 0.34}]
+                    })
+                return
         if parsed.path not in RESPONSES:
             self.reply({"error": "unknown fixture GET"}, 404)
             return

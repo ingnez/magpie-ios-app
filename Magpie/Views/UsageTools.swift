@@ -2,8 +2,10 @@ import SwiftUI
 
 struct UsageTrendView: View {
     let series: [RemoteUsagePoint]
+    var totalCalls: Int = 0
     @State private var metric = "calls"
     @State private var selected: Int?
+
     private func amount(_ point: RemoteUsagePoint) -> Double {
         switch metric {
         case "tokens": return Double(point.input + point.output)
@@ -11,34 +13,58 @@ struct UsageTrendView: View {
         default: return Double(point.calls)
         }
     }
+
     var body: some View {
         MinimalSection(title: "用量趋势") {
             Picker("指标", selection: $metric) {
-                Text("请求数").tag("calls"); Text("Token").tag("tokens"); Text("费用").tag("cost")
-            }.pickerStyle(.segmented)
-            if series.isEmpty { Text("本周期暂无用量").font(.caption) }
-            else {
+                Text("请求数").tag("calls")
+                Text("Token").tag("tokens")
+                Text("费用").tag("cost")
+            }
+            .pickerStyle(.segmented)
+
+            if series.isEmpty {
+                Text(totalCalls > 0
+                    ? "该时段累计 \(totalCalls) 次调用，但未返回按时间切分的趋势序列。"
+                    : "本周期暂无用量趋势数据，可调整上方时间区间或点击刷新。")
+                    .font(Typography.bodySmall)
+                    .foregroundColor(MagpieTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
                 let maximum = max(series.map(amount).max() ?? 0, 1)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .bottom, spacing: 4) {
+                    HStack(alignment: .bottom, spacing: Spacing.xxs) {
                         ForEach(Array(series.enumerated()), id: \.offset) { index, point in
                             Button { selected = index } label: {
-                                VStack(spacing: 4) {
+                                VStack(spacing: Spacing.xxs) {
                                     RoundedRectangle(cornerRadius: 3)
-                                        .fill(selected == index ? MagpieTheme.ok : MagpieTheme.ink)
+                                        .fill(selected == index ? StatusPalette.ok : MagpieTheme.ink)
                                         .frame(height: max(2, CGFloat(amount(point) / maximum) * 120))
                                     Text(point.label.isEmpty ? String(point.time.suffix(5)) : point.label)
-                                        .font(.system(size: 9)).lineLimit(1)
-                                }.frame(width: 32)
-                            }.buttonStyle(.plain).accessibilityLabel("\(point.label) \(amount(point))")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(MagpieTheme.textMuted)
+                                        .lineLimit(1)
+                                }
+                                .frame(width: 32)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(point.label) \(amount(point))")
                         }
-                    }.frame(height: 145, alignment: .bottom)
+                    }
+                    .frame(height: 145, alignment: .bottom)
                 }
+
                 if let index = selected, series.indices.contains(index) {
                     let point = series[index]
                     Text(String(format: "%@ · %d 请求 · %d Token · $%.4f", point.label.isEmpty ? point.time : point.label, point.calls, point.input + point.output, point.cost))
-                        .font(.caption.monospaced()).textSelection(.enabled)
-                } else { Text("点按柱形查看具体用量").font(.caption).foregroundColor(MagpieTheme.textSecondary) }
+                        .font(Typography.captionMono)
+                        .foregroundColor(MagpieTheme.ink)
+                        .textSelection(.enabled)
+                } else {
+                    Text("点按柱形查看具体用量")
+                        .font(Typography.caption)
+                        .foregroundColor(MagpieTheme.textSecondary)
+                }
             }
         }
     }
@@ -83,12 +109,20 @@ struct UsageAutomationView: View {
                     Button("Claude 账号热身") { confirmWarm = "claude" }
                     Button("Codex 账号热身") { confirmWarm = "codex" }
                 }
-                if !output.isEmpty { Section(header: Text("结果")) { Text(output).font(.caption.monospaced()).textSelection(.enabled) } }
+                if !output.isEmpty {
+                    Section(header: Text("结果")) {
+                        Text(output)
+                            .font(.caption.monospaced())
+                            .foregroundColor(MagpieTheme.ink)
+                            .textSelection(.enabled)
+                    }
+                }
             }
             .disabled(busy)
             .navigationTitle("签到与热身")
             .toolbar { Button("关闭") { dismiss() } }
-        }.navigationViewStyle(.stack)
+        }
+        .navigationViewStyle(.stack)
         .onAppear { automatic = store.remoteSettings.automaticCheckins[provider] ?? false }
         .onChange(of: provider) { value in automatic = store.remoteSettings.automaticCheckins[value] ?? false }
         .confirmationDialog("执行账号热身，可能消耗额度", isPresented: Binding(get: { confirmWarm != nil }, set: { if !$0 { confirmWarm = nil } }), titleVisibility: .visible) {
@@ -107,6 +141,7 @@ struct UsageAutomationView: View {
             Button("取消", role: .cancel) { confirmWarm = nil }
         }
     }
+
     private func checkIn(_ provider: String) {
         busy = true
         Task {
