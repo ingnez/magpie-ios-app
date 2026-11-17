@@ -3,7 +3,13 @@ import XCTest
 final class MagpieScreenshotTests: XCTestCase {
     private var fixture: FixtureHTTPServer?
     override func setUp() { super.setUp(); continueAfterFailure = false }
-    override func tearDown() { fixture?.stop(); fixture = nil; super.tearDown() }
+    override func tearDown() {
+        if let requests = fixture?.requests(), let data = try? JSONSerialization.data(withJSONObject: requests) {
+            let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+            attachment.name = "UI API requests"; attachment.lifetime = .keepAlways; add(attachment)
+        }
+        fixture?.stop(); fixture = nil; super.tearDown()
+    }
     private func shot(_ name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
@@ -13,18 +19,23 @@ final class MagpieScreenshotTests: XCTestCase {
     private func tap(_ title: String, app: XCUIApplication, scroll: Bool = false) {
         let matches = app.buttons.matching(identifier: title)
         XCTAssertTrue(matches.firstMatch.waitForExistence(timeout: 10), "Missing button: \(title)")
+        func visible(_ button: XCUIElement) -> Bool {
+            guard button.isHittable && button.isEnabled else { return false }
+            let bottomTab = app.buttons["tab.home"]
+            return !scroll || !bottomTab.isHittable || button.frame.maxY <= bottomTab.frame.minY - 12
+        }
         if scroll {
             for _ in 0..<12 {
-                if matches.allElementsBoundByIndex.contains(where: { $0.isHittable }) { break }
+                if matches.allElementsBoundByIndex.contains(where: visible) { break }
                 app.swipeUp()
             }
         }
         // Nested sheets expose their covered parent's buttons under the same label.
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            matches.allElementsBoundByIndex.contains { $0.isHittable && $0.isEnabled }
+            matches.allElementsBoundByIndex.contains(where: visible)
         }, object: app)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed, "No enabled visible button: \(title)")
-        guard let button = matches.allElementsBoundByIndex.first(where: { $0.isHittable && $0.isEnabled }) else {
+        guard let button = matches.allElementsBoundByIndex.first(where: visible) else {
             XCTFail("Button disappeared: \(title)"); return
         }
         button.tap()
@@ -139,7 +150,5 @@ final class MagpieScreenshotTests: XCTestCase {
         let limitIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/limit-key" })
         let accessIndex = try XCTUnwrap(requests.firstIndex { $0["path"] as? String == "/api/caller-keys/access-key" })
         XCTAssertLessThan(limitIndex, accessIndex, "Budget must be applied before granting caller access")
-        let attachment = XCTAttachment(data: try JSONSerialization.data(withJSONObject: requests), uniformTypeIdentifier: "public.json")
-        attachment.name = "UI API requests"; attachment.lifetime = .keepAlways; add(attachment)
     }
 }

@@ -73,9 +73,9 @@ struct MagpieRootView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
 
-            minimalTabBar
+                minimalTabBar
+            }
 
             if let toast = store.toastMessage {
                 VStack {
